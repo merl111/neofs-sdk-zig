@@ -1,0 +1,6 @@
+{
+  "key": "0xff51afd7ed558ccd",
+  "nodes": [1, 2, 3, 4, 5],
+  "expectedOrder": [4, 2, 5, 3, 1],
+  "source": "github.com/nspcc-dev/hrw/v2@v2.0.4 hrw_test.go:TestSort"
+}

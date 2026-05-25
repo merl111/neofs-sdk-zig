@@ -1,0 +1,12 @@
+.zig-cache/
+zig-out/
+tmp/
+*.code-workspace
+*.log
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
