@@ -1,0 +1,41 @@
+name: neofs-sdk-zig Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install OpenSSL and protoc
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev protobuf-compiler
+
+      - name: Run unit tests
+        run: zig build test
+
+      - name: Run cross-language vectors
+        run: zig build vectors
+
+      - name: Verify generated proto stubs
+        run: |
+          zig build --fetch
+          bash scripts/genapi.sh
+          git diff --exit-code src/proto/gen
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

@@ -2,15 +2,16 @@
     .name = .neofs_sdk_zig,
     .version = "0.1.0",
     .fingerprint = 0x1c8b9406dd450aa2,
-    .minimum_zig_version = "0.15.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .protobuf = .{
-            .url = "git+https://github.com/Arwalk/zig-protobuf?ref=v4.0.0#622e9e84f6df66758718b1196e1ccd6dd45a8930",
-            .hash = "protobuf-3.0.0-0e82avQuKADcHgDzDixSMGN22hzGEgwFE0tEJUWnWu5Q",
+            .url = "git+https://github.com/Arwalk/zig-protobuf?ref=master#88f1eb601b0fd7249548312a41dd917fb6fc09b5",
+            .hash = "protobuf-5.0.0-0e82atPqKQDx5vcIPkphrfqJPD5o5CVktYK7OKrgjcxQ",
         },
     },
     .paths = .{
         "build.zig",
+        "build_compat.zig",
         "build.zig.zon",
         "src",
         "scripts",

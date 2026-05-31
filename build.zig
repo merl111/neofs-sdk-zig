@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_compat = @import("build_compat.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -24,9 +25,9 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .root_module = test_mod,
     });
+    tests.use_llvm = true;
     tests.root_module.link_libc = true;
-    tests.linkSystemLibrary("ssl");
-    tests.linkSystemLibrary("crypto");
+    build_compat.linkOpenSsl(tests);
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -47,9 +48,9 @@ pub fn build(b: *std.Build) void {
     const vector_tests = b.addTest(.{
         .root_module = vector_test_mod,
     });
+    vector_tests.use_llvm = true;
     vector_tests.root_module.link_libc = true;
-    vector_tests.linkSystemLibrary("ssl");
-    vector_tests.linkSystemLibrary("crypto");
+    build_compat.linkOpenSsl(vector_tests);
     const run_vector_tests = b.addRunArtifact(vector_tests);
     const vectors_step = b.step("vectors", "Run cross-language vector tests (HRW, tzhash, netmap JSON)");
     vectors_step.dependOn(&run_vector_tests.step);
@@ -83,8 +84,7 @@ pub fn build(b: *std.Build) void {
                     }),
                 });
                 exe.root_module.link_libc = true;
-                exe.linkSystemLibrary("ssl");
-                exe.linkSystemLibrary("crypto");
+                build_compat.linkOpenSsl(exe);
                 const run_cmd = b.addRunArtifact(exe);
                 b.step("run", "Run selected example").dependOn(&run_cmd.step);
                 break;
