@@ -6,17 +6,19 @@ pub const Network = enum {
     mainnet,
     testnet,
 
+    /// Script hash (LE hex) of the NeoFS sidechain deposit account (processing contract).
     pub fn neofsScriptHashLe(self: Network) []const u8 {
         return switch (self) {
             .mainnet => "2cafa46838e8b564468ebd868dcafdd99dce6221",
-            .testnet => "b65d8243ac63983206d17e5221af0653a7266fa1",
+            .testnet => "3c3f4b84773ef0141576e48c3ff60e5078235891",
         };
     }
 
+    /// N3 address that receives GAS deposits credited to NeoFS balances.
     pub fn neofsAddress(self: Network) []const u8 {
         return switch (self) {
             .mainnet => "NNxVrKjLsRkWsmGgmuNXLcMswtxTGaNQLk",
-            .testnet => "NadZ8YfvkddivcFFkztZgfwxZyKf1acpRF",
+            .testnet => "NZAUkYbJ1Cb2HrNmwZ1pg9xYHBhm2FgtKV",
         };
     }
 };
