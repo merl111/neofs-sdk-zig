@@ -8,6 +8,7 @@ const accounting_pb = @import("../../proto/gen/accounting/types.pb.zig");
 const reputation_pb = @import("../../proto/gen/reputation/types.pb.zig");
 const refs_pb = @import("../../proto/gen/refs/types.pb.zig");
 const netmap_pb = @import("../../proto/gen/netmap/types.pb.zig");
+const acl_pb = @import("../../proto/gen/acl/types.pb.zig");
 
 fn sizeEmpty(_: anytype) usize {
     return 0;
@@ -386,7 +387,25 @@ fn sizeGetRequestBody(b: container_pb.GetRequest.Body) usize {
     return 0;
 }
 
+fn sizeGetExtendedACLRequestBody(b: container_pb.GetExtendedACLRequest.Body) usize {
+    if (b.container_id) |cid| {
+        return sizeEmbedded(1, sizeContainerID(cid));
+    }
+    return 0;
+}
+
 fn marshalGetRequestBody(b: container_pb.GetRequest.Body, out: []u8) usize {
+    if (b.container_id) |cid| {
+        const body_sz = sizeContainerID(cid);
+        const tag = wire.putTag(out, 1, 2);
+        const len = wire.putVarint(out[tag..], body_sz);
+        _ = marshalContainerID(cid, out[tag + len ..][0..body_sz]);
+        return tag + len + body_sz;
+    }
+    return 0;
+}
+
+fn marshalGetExtendedACLRequestBody(b: container_pb.GetExtendedACLRequest.Body, out: []u8) usize {
     if (b.container_id) |cid| {
         const body_sz = sizeContainerID(cid);
         const tag = wire.putTag(out, 1, 2);
@@ -982,11 +1001,50 @@ fn marshalObjectHeader(h: object_pb.Header, out: []u8) usize {
     return off;
 }
 
-fn sizeObjectHeaderSplit(_: object_pb.Split) usize {
-    return 0;
+fn sizeObjectHeaderSplit(s: object_pb.Split) usize {
+    var total: usize = 0;
+    if (s.parent) |p| total += sizeEmbedded(1, sizeObjectID(p));
+    if (s.previous) |p| total += sizeEmbedded(2, sizeObjectID(p));
+    for (s.children.items) |c| total += sizeEmbedded(5, sizeObjectID(c));
+    if (s.split_id.len > 0) total += sizeBytes(6, s.split_id);
+    if (s.first) |f| total += sizeEmbedded(7, sizeObjectID(f));
+    return total;
 }
-fn marshalObjectHeaderSplit(_: object_pb.Split, _: []u8) usize {
-    return 0;
+
+fn marshalObjectHeaderSplit(s: object_pb.Split, out: []u8) usize {
+    var off: usize = 0;
+    if (s.parent) |p| {
+        const body_sz = sizeObjectID(p);
+        const tag = wire.putTag(out[off..], 1, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalObjectID(p, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    if (s.previous) |p| {
+        const body_sz = sizeObjectID(p);
+        const tag = wire.putTag(out[off..], 2, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalObjectID(p, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    for (s.children.items) |c| {
+        const body_sz = sizeObjectID(c);
+        const tag = wire.putTag(out[off..], 5, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalObjectID(c, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    if (s.split_id.len > 0) {
+        off += marshalBytes(out[off..], 6, s.split_id);
+    }
+    if (s.first) |f| {
+        const body_sz = sizeObjectID(f);
+        const tag = wire.putTag(out[off..], 7, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalObjectID(f, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    return off;
 }
 
 fn sizeObjectPutRequestInit(init: object_pb.PutRequest.Body.Init) usize {
@@ -1092,6 +1150,121 @@ fn marshalSearchV2RequestBody(b: object_pb.SearchV2Request.Body, out: []u8) usiz
     return off;
 }
 
+fn sizeEACLRecordTarget(t: acl_pb.EACLRecord.Target) usize {
+    var total = sizeVarint(1, @intCast(@intFromEnum(t.role)));
+    for (t.keys.items) |key| total += sizeBytes(2, key);
+    return total;
+}
+
+fn marshalEACLRecordTarget(t: acl_pb.EACLRecord.Target, out: []u8) usize {
+    var off = marshalVarint(out, 1, @intCast(@intFromEnum(t.role)));
+    for (t.keys.items) |key| off += marshalBytes(out[off..], 2, key);
+    return off;
+}
+
+fn sizeEACLRecordFilter(f: acl_pb.EACLRecord.Filter) usize {
+    return sizeVarint(1, @intCast(@intFromEnum(f.header_type))) +
+        sizeVarint(2, @intCast(@intFromEnum(f.match_type))) +
+        sizeBytes(3, f.key) +
+        sizeBytes(4, f.value);
+}
+
+fn marshalEACLRecordFilter(f: acl_pb.EACLRecord.Filter, out: []u8) usize {
+    var off = marshalVarint(out, 1, @intCast(@intFromEnum(f.header_type)));
+    off += marshalVarint(out[off..], 2, @intCast(@intFromEnum(f.match_type)));
+    off += marshalBytes(out[off..], 3, f.key);
+    off += marshalBytes(out[off..], 4, f.value);
+    return off;
+}
+
+fn sizeEACLRecord(r: acl_pb.EACLRecord) usize {
+    var total = sizeVarint(1, @intCast(@intFromEnum(r.operation)));
+    total += sizeVarint(2, @intCast(@intFromEnum(r.action)));
+    for (r.filters.items) |f| total += sizeEmbedded(3, sizeEACLRecordFilter(f));
+    for (r.targets.items) |t| total += sizeEmbedded(4, sizeEACLRecordTarget(t));
+    return total;
+}
+
+fn marshalEACLRecord(r: acl_pb.EACLRecord, out: []u8) usize {
+    var off = marshalVarint(out, 1, @intCast(@intFromEnum(r.operation)));
+    off += marshalVarint(out[off..], 2, @intCast(@intFromEnum(r.action)));
+    for (r.filters.items) |f| {
+        const body_sz = sizeEACLRecordFilter(f);
+        const tag = wire.putTag(out[off..], 3, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalEACLRecordFilter(f, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    for (r.targets.items) |t| {
+        const body_sz = sizeEACLRecordTarget(t);
+        const tag = wire.putTag(out[off..], 4, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalEACLRecordTarget(t, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    return off;
+}
+
+fn sizeEACLTable(t: acl_pb.EACLTable) usize {
+    var total: usize = 0;
+    if (t.version) |v| total += sizeEmbedded(1, sizeVersion(v));
+    if (t.container_id) |cid| total += sizeEmbedded(2, sizeContainerID(cid));
+    for (t.records.items) |r| total += sizeEmbedded(3, sizeEACLRecord(r));
+    return total;
+}
+
+fn marshalEACLTable(t: acl_pb.EACLTable, out: []u8) usize {
+    var off: usize = 0;
+    if (t.version) |v| {
+        const body_sz = sizeVersion(v);
+        const tag = wire.putTag(out[off..], 1, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalVersion(v, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    if (t.container_id) |cid| {
+        const body_sz = sizeContainerID(cid);
+        const tag = wire.putTag(out[off..], 2, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalContainerID(cid, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    for (t.records.items) |r| {
+        const body_sz = sizeEACLRecord(r);
+        const tag = wire.putTag(out[off..], 3, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalEACLRecord(r, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    return off;
+}
+
+fn sizeSetExtendedACLRequestBody(b: container_pb.SetExtendedACLRequest.Body) usize {
+    var total: usize = 0;
+    if (b.eacl) |table| total += sizeEmbedded(1, sizeEACLTable(table));
+    if (b.signature) |s| total += sizeEmbedded(2, sizeSignatureRFC6979(s));
+    return total;
+}
+
+fn marshalSetExtendedACLRequestBody(b: container_pb.SetExtendedACLRequest.Body, out: []u8) usize {
+    var off: usize = 0;
+    if (b.eacl) |table| {
+        const body_sz = sizeEACLTable(table);
+        const tag = wire.putTag(out[off..], 1, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalEACLTable(table, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    if (b.signature) |s| {
+        const body_sz = sizeSignatureRFC6979(s);
+        const tag = wire.putTag(out[off..], 2, 2);
+        const len = wire.putVarint(out[off + tag ..], body_sz);
+        _ = marshalSignatureRFC6979(s, out[off + tag + len ..][0..body_sz]);
+        off += tag + len + body_sz;
+    }
+    return off;
+}
+
 pub fn sizeMessage(msg: anytype) usize {
     const T = @TypeOf(msg);
     return switch (T) {
@@ -1101,6 +1274,7 @@ pub fn sizeMessage(msg: anytype) usize {
         container_pb.PutRequest.Body => sizePutRequestBody(msg),
         container_pb.ListRequest.Body => sizeListRequestBody(msg),
         container_pb.GetRequest.Body => sizeGetRequestBody(msg),
+        container_pb.GetExtendedACLRequest.Body => sizeGetExtendedACLRequestBody(msg),
         container_pb.DeleteRequest.Body => sizeDeleteRequestBody(msg),
         session_pb.CreateRequest.Body => sizeCreateRequestBody(msg),
         object_pb.DeleteRequest.Body => sizeObjectDeleteRequestBody(msg),
@@ -1114,7 +1288,8 @@ pub fn sizeMessage(msg: anytype) usize {
         reputation_pb.AnnounceLocalTrustRequest.Body => sizeAnnounceLocalTrustBody(msg),
         reputation_pb.AnnounceIntermediateResultRequest.Body => sizeAnnounceIntermediateResultBody(msg),
         netmap_pb.NetworkInfoRequest.Body => sizeEmpty(msg),
-        container_pb.SetExtendedACLRequest.Body => sizeEmpty(msg),
+        container_pb.SetExtendedACLRequest.Body => sizeSetExtendedACLRequestBody(msg),
+        acl_pb.EACLTable => sizeEACLTable(msg),
         else => @compileError("unsupported stable signing message type: " ++ @typeName(T)),
     };
 }
@@ -1128,6 +1303,7 @@ pub fn marshalMessage(msg: anytype, out: []u8) usize {
         container_pb.PutRequest.Body => marshalPutRequestBody(msg, out),
         container_pb.ListRequest.Body => marshalListRequestBody(msg, out),
         container_pb.GetRequest.Body => marshalGetRequestBody(msg, out),
+        container_pb.GetExtendedACLRequest.Body => marshalGetExtendedACLRequestBody(msg, out),
         container_pb.DeleteRequest.Body => marshalDeleteRequestBody(msg, out),
         session_pb.CreateRequest.Body => marshalCreateRequestBody(msg, out),
         object_pb.DeleteRequest.Body => marshalObjectDeleteRequestBody(msg, out),
@@ -1141,7 +1317,8 @@ pub fn marshalMessage(msg: anytype, out: []u8) usize {
         reputation_pb.AnnounceLocalTrustRequest.Body => marshalAnnounceLocalTrustBody(msg, out),
         reputation_pb.AnnounceIntermediateResultRequest.Body => marshalAnnounceIntermediateResultBody(msg, out),
         netmap_pb.NetworkInfoRequest.Body => marshalEmpty(msg, out),
-        container_pb.SetExtendedACLRequest.Body => marshalEmpty(msg, out),
+        container_pb.SetExtendedACLRequest.Body => marshalSetExtendedACLRequestBody(msg, out),
+        acl_pb.EACLTable => marshalEACLTable(msg, out),
         else => @compileError("unsupported stable signing message type: " ++ @typeName(T)),
     };
 }
@@ -1167,9 +1344,7 @@ test "default request meta header matches go stable marshal" {
 }
 
 test "put request body stable marshal matches stable container bytes" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = false }){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const init = @import("../../container/init.zig");
     const stable = @import("stable.zig");
     const user = @import("../../user/id.zig");
@@ -1181,7 +1356,8 @@ test "put request body stable marshal matches stable container bytes" {
     defer init.deinitContainer(allocator, c);
 
     const sig = refs_pb.SignatureRFC6979{ .key = "pub", .sign = "sig" };
-    const body = try init.toPutRequestBody(allocator, c, sig);
+    var body = try init.toPutRequestBody(allocator, c, sig);
+    defer body.deinit(allocator);
 
     var stable_buf: [4096]u8 = undefined;
     const stable_size = stable.sizeContainer(c);
