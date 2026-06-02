@@ -10,9 +10,7 @@ const netmap_pb = @import("../proto/gen/netmap/types.pb.zig");
 const container_pb = @import("../proto/gen/container/types.pb.zig");
 
 fn verifyRequestRoundTrip(comptime RequestType: type, request_bytes: []const u8) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var reader = std.Io.Reader.fixed(request_bytes);
     var decoded = try RequestType.decode(&reader, allocator);

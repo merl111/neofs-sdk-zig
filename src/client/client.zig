@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 const version = @import("../version/version.zig");
 const checksum = @import("../checksum/checksum.zig");
 const accounting = @import("../accounting/decimal.zig");
@@ -14,7 +15,9 @@ const netmap_pb = @import("../proto/gen/netmap/types.pb.zig");
 const session_pb = @import("../proto/gen/session/types.pb.zig");
 const grpc_transport = @import("../transport/grpc.zig");
 const object_stream = @import("object_stream.zig");
-const grpc_rpc = @import("grpc_rpc.zig");
+pub const grpc_rpc = @import("grpc_rpc.zig");
+pub const HashRange = grpc_rpc.HashRange;
+pub const ParsedNetmapSnapshot = grpc_rpc.ParsedNetmapSnapshot;
 const stable = @import("../internal/proto/stable.zig");
 const signer_mod = @import("../crypto/signer.zig");
 const refs_pb = @import("../proto/gen/refs/types.pb.zig");
@@ -66,9 +69,9 @@ pub const Client = struct {
     pub fn init(allocator: std.mem.Allocator) Client {
         return .{
             .allocator = allocator,
-            .containers = .{},
-            .objects = .{},
-            .replications = .{},
+            .containers = .empty,
+            .objects = .empty,
+            .replications = .empty,
             .session_v2_cache = std.StringHashMap(session_pb.SessionTokenV2).init(allocator),
         };
     }
@@ -107,7 +110,7 @@ pub const Client = struct {
         }
     }
 
-    pub fn dial(self: *Client, endpoint: []const u8, tls: bool, timeout_ms: u64) !void {
+    pub fn dial(self: *Client, io: std.Io, endpoint: []const u8, tls: bool, timeout_ms: u64) !void {
         self.transport = .{
             .endpoint = endpoint,
             .tls = tls,
@@ -121,7 +124,7 @@ pub const Client = struct {
             const port = try parsePort(host_port);
             const grpc_client = try self.allocator.create(grpc_transport.Client);
             errdefer self.allocator.destroy(grpc_client);
-            grpc_client.* = try grpc_transport.Client.connect(self.allocator, host, port, tls);
+            grpc_client.* = try grpc_transport.Client.connect(self.allocator, io, host, port, tls);
             self.grpc = grpc_client;
         }
     }
@@ -135,7 +138,7 @@ pub const Client = struct {
     }
 
     pub fn isGrpc(self: *Client) bool {
-        return self.transport != null and self.transport.?.mode == .grpc;
+        return self.grpc != null;
     }
 
     pub fn close(self: *Client) void {
@@ -173,7 +176,7 @@ pub const Client = struct {
             return grpc_rpc.sessionCreate(self.allocator, self.grpc.?, key, owner, exp_epoch);
         }
         var id: [16]u8 = undefined;
-        std.crypto.random.bytes(&id);
+        csprng.randomBytes(&id);
         return .{
             .id = id,
             .session_key = try self.allocator.dupe(u8, &[_]u8{}),
@@ -250,8 +253,8 @@ pub const Client = struct {
 
     /// Read balance for `owner` using a local transport signature (no owner key required).
     pub fn balanceGetForOwner(self: *Client, owner: user.ID) !accounting.Decimal {
-        if (!self.isGrpc()) return error.NotConnected;
-        return grpc_rpc.balanceGetForOwner(self.allocator, self.grpc.?, owner);
+        const grpc_client = self.grpc orelse return error.NotConnected;
+        return grpc_rpc.balanceGetForOwner(self.allocator, grpc_client, owner);
     }
 
     pub fn putContainer(self: *Client, cont: stable.Container) ![32]u8 {
@@ -268,7 +271,7 @@ pub const Client = struct {
     pub fn containerPut(self: *Client, c: container.Container) ![32]u8 {
         if (self.isGrpc()) {
             const key = self.signer_key orelse return error.MissingSigner;
-            var attrs: std.ArrayList(stable.ContainerAttribute) = .{};
+            var attrs: std.ArrayList(stable.ContainerAttribute) = .empty;
             defer attrs.deinit(self.allocator);
 
             var it = c.attributes.iterator();
@@ -337,7 +340,7 @@ pub const Client = struct {
             return grpc_rpc.containerList(self.allocator, self.grpc.?, key, owner);
         }
         try self.requireMemoryBackend();
-        var out: std.ArrayList([32]u8) = .{};
+        var out: std.ArrayList([32]u8) = .empty;
         for (self.containers.items) |rec| {
             if (rec.owner.len == user.IDSize and std.mem.eql(u8, rec.owner, &owner.bytes)) {
                 try out.append(self.allocator, rec.id);
@@ -367,7 +370,8 @@ pub const Client = struct {
 
     pub fn containerEaclGet(self: *Client, id: [32]u8) ![]const u8 {
         if (self.isGrpc()) {
-            const bin = try grpc_rpc.containerEaclGet(self.allocator, self.grpc.?, id);
+            const key = self.signer_key orelse return error.MissingSigner;
+            const bin = try grpc_rpc.containerEaclGet(self.allocator, self.grpc.?, key, id);
             return bin;
         }
         try self.requireMemoryBackend();
@@ -472,10 +476,10 @@ pub const Client = struct {
         self.allocator.free(rec.payload);
     }
 
-    pub fn objectHash(self: *Client, id: [32]u8) ![32]u8 {
+    pub fn objectHash(self: *Client, id: [32]u8, ranges: []const grpc_rpc.HashRange) ![32]u8 {
         if (self.isGrpc()) {
             const rec = self.findObject(id) orelse return error.ObjectNotFound;
-            return grpc_rpc.objectHash(self.allocator, self.grpc.?, rec.container_id, id);
+            return grpc_rpc.objectHash(self.allocator, self.grpc.?, rec.container_id, id, ranges);
         }
         try self.requireMemoryBackend();
         const rec = self.findObject(id) orelse return error.ObjectNotFound;
@@ -490,9 +494,12 @@ pub const Client = struct {
     }
 
     pub fn searchObjects(self: *Client, container_id: [32]u8) ![][32]u8 {
-        if (self.isGrpc()) return grpc_rpc.searchObjectsV2(self.allocator, self.grpc.?, container_id);
+        if (self.isGrpc()) {
+            const key = self.signer_key orelse return error.MissingSigner;
+            return grpc_rpc.searchObjectsV2(self.allocator, self.grpc.?, key, container_id);
+        }
         try self.requireMemoryBackend();
-        var out: std.ArrayList([32]u8) = .{};
+        var out: std.ArrayList([32]u8) = .empty;
         for (self.objects.items) |rec| {
             if (std.mem.eql(u8, &rec.container_id, &container_id)) {
                 try out.append(self.allocator, rec.id);
@@ -501,12 +508,18 @@ pub const Client = struct {
         return out.toOwnedSlice(self.allocator);
     }
 
-    pub fn searchObjectsDetailed(self: *Client, container_id: [32]u8) ![]grpc_rpc.SearchObjectEntry {
+    pub fn searchObjectsDetailed(
+        self: *Client,
+        container_id: [32]u8,
+        attribute_names: []const []const u8,
+        filters: []const @import("../object/search.zig").Filter,
+    ) ![]grpc_rpc.SearchObjectEntry {
         if (self.isGrpc()) {
-            return grpc_rpc.searchObjectsDetailed(self.allocator, self.grpc.?, container_id, &.{ "Name", "FileName" });
+            const key = self.signer_key orelse return error.MissingSigner;
+            return grpc_rpc.searchObjectsDetailed(self.allocator, self.grpc.?, key, container_id, attribute_names, filters);
         }
         try self.requireMemoryBackend();
-        var out: std.ArrayList(SearchObjectEntry) = .{};
+        var out: std.ArrayList(SearchObjectEntry) = .empty;
         for (self.objects.items) |rec| {
             if (std.mem.eql(u8, &rec.container_id, &container_id)) {
                 try out.append(self.allocator, .{ .id = rec.id, .attribute_values = &.{} });
@@ -550,7 +563,7 @@ pub const Client = struct {
         return .{
             .allocator = self.allocator,
             .grpc_client = grpc_client,
-            .chunks = .{},
+            .chunks = .empty,
         };
     }
 
@@ -665,13 +678,9 @@ pub const Client = struct {
     pub fn netMapSnapshot(self: *Client) ![]const u8 {
         if (self.transport == null) return error.NotConnected;
         if (self.transport.?.mode == .grpc) {
-            const req = netmap_pb.NetmapSnapshotRequest{};
-            var resp = try self.grpcUnary(req, "/neo.fs.v2.netmap.NetmapService/NetmapSnapshot", netmap_pb.NetmapSnapshotResponse);
-            defer resp.deinit(self.allocator);
-            try status_failure.validate(self.allocator, resp.meta_header);
-            const body = resp.body orelse return error.InvalidResponse;
-            const nm = body.netmap orelse return error.InvalidResponse;
-            return std.fmt.allocPrint(self.allocator, "snapshot:epoch={d},nodes={d}", .{ nm.epoch, nm.nodes.items.len });
+            const parsed = try self.netMapSnapshotParsed();
+            defer parsed.deinit(self.allocator);
+            return std.fmt.allocPrint(self.allocator, "snapshot:epoch={d},nodes={d}", .{ parsed.epoch, parsed.nodes.len });
         }
         return "snapshot:v2.22";
     }
@@ -734,11 +743,17 @@ pub const Client = struct {
         self: *Client,
         container_id: [32]u8,
         attribute_names: []const []const u8,
+        filters: []const @import("../object/search.zig").Filter,
         session_token_v2: session_pb.SessionTokenV2,
     ) ![]SearchObjectEntry {
         if (!self.isGrpc()) return error.NotImplementedOverGrpc;
         const key = self.signer_key orelse return error.MissingSigner;
-        return grpc_rpc.searchObjectsDetailedWithSessionV2(self.allocator, self.grpc.?, key, container_id, attribute_names, session_token_v2);
+        return grpc_rpc.searchObjectsDetailedWithSessionV2(self.allocator, self.grpc.?, key, container_id, attribute_names, filters, session_token_v2);
+    }
+
+    pub fn netMapSnapshotParsed(self: *Client) !grpc_rpc.ParsedNetmapSnapshot {
+        if (!self.isGrpc()) return error.NotImplementedOverGrpc;
+        return grpc_rpc.netMapSnapshotParsed(self.allocator, self.grpc.?);
     }
 
     pub fn sessionV2CachePut(self: *Client, key: []const u8, token: session_pb.SessionTokenV2) !void {
@@ -832,23 +847,19 @@ fn parsePort(host_port: []const u8) !u16 {
 }
 
 test "client lifecycle" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var c = Client.init(gpa.allocator());
+    var c = Client.init(std.testing.allocator);
     defer c.deinit();
-    try c.dial("mem://localhost:8080", false, 1000);
+    try c.dial(std.testing.io, "mem://localhost:8080", false, 1000);
     const ep = try c.endpointInfo();
     try std.testing.expectEqualStrings("mem://localhost:8080", ep);
 }
 
 test "container and object lifecycle" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var c = Client.init(gpa.allocator());
+    var c = Client.init(std.testing.allocator);
     defer c.deinit();
-    try c.dial("mem://localhost:8080", false, 1000);
+    try c.dial(std.testing.io, "mem://localhost:8080", false, 1000);
 
-    var cont = try container.Container.init(gpa.allocator(), "owner-1", "nonce-1");
+    var cont = try container.Container.init(std.testing.allocator, "owner-1", "nonce-1");
     defer cont.deinit();
     const cid = try c.containerPut(cont);
     try c.setContainerAttribute(cid, "k", "v");

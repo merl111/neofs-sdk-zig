@@ -169,9 +169,7 @@ pub fn signRequestMessageWithSigner(
 }
 
 test "signed container put request with session token v2 survives protobuf round trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const container_pb = @import("../proto/gen/container/types.pb.zig");
     const container_init = @import("../container/init.zig");
     const crypto_ecdsa = @import("../crypto/ecdsa/keys.zig");
@@ -289,9 +287,7 @@ fn testDelegatedSessionTokenV2(
 }
 
 test "signed session v2 object requests survive protobuf round trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const object_pb = @import("../proto/gen/object/types.pb.zig");
 
     var container_id: [32]u8 = undefined;
@@ -334,7 +330,7 @@ test "signed session v2 object requests survive protobuf round trip" {
     search_meta.session_token_v2 = try object_token.dupe(allocator);
     var search_body = object_pb.SearchV2Request.Body{
         .container_id = .{ .value = try allocator.dupe(u8, &container_id) },
-        .attributes = .{},
+        .attributes = .empty,
     };
     try search_body.attributes.append(allocator, try allocator.dupe(u8, "FileName"));
     const search_req = object_pb.SearchV2Request{
@@ -347,9 +343,7 @@ test "signed session v2 object requests survive protobuf round trip" {
 }
 
 test "legacy zero container session token v2 normalizes before signing" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const container_pb = @import("../proto/gen/container/types.pb.zig");
     const crypto_ecdsa = @import("../crypto/ecdsa/keys.zig");
     const user_mod = @import("../user/id.zig");
@@ -395,9 +389,7 @@ test "legacy zero container session token v2 normalizes before signing" {
 }
 
 test "signed balance request survives protobuf round trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const accounting_pb = @import("../proto/gen/accounting/types.pb.zig");
     const user = @import("../user/id.zig");
 

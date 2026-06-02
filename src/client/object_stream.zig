@@ -50,7 +50,7 @@ pub const ObjectWriter = struct {
     pub fn close(self: *ObjectWriter) !void {
         if (self.closed) return;
         self.closed = true;
-        var encoded_chunks: std.ArrayList([]const u8) = .{};
+        var encoded_chunks: std.ArrayList([]const u8) = .empty;
         defer encoded_chunks.deinit(self.allocator);
         if (self.init_request) |init_req| {
             var w: std.Io.Writer.Allocating = .init(self.allocator);
@@ -261,7 +261,7 @@ pub fn objectPutInit(
     return .{
         .allocator = allocator,
         .grpc_client = client,
-        .chunks = .{},
+        .chunks = .empty,
         .init_request = init_request,
         .local_signer = .{ .secret = signer_key },
         .signer = null,
@@ -286,7 +286,7 @@ pub fn objectPutInitWithSigner(
     return .{
         .allocator = allocator,
         .grpc_client = client,
-        .chunks = .{},
+        .chunks = .empty,
         .init_request = init_request,
         .signer = signer,
         .session_token = owned_token,
@@ -352,7 +352,7 @@ pub fn objectGetInitWithSigner(
             .reader = .{
                 .allocator = allocator,
                 .stream = stream,
-                .chunks = .{},
+                .chunks = .empty,
             },
         };
     }
@@ -368,7 +368,7 @@ pub fn objectGetInitWithSigner(
         .reader = .{
             .allocator = allocator,
             .stream = stream,
-            .chunks = .{},
+            .chunks = .empty,
         },
     };
 }

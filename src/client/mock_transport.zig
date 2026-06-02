@@ -15,7 +15,7 @@ pub const Client = struct {
     pub fn init(allocator: std.mem.Allocator) Client {
         return .{
             .allocator = allocator,
-            .calls = .{},
+            .calls = .empty,
             .responses = std.StringHashMap([]u8).init(allocator),
         };
     }

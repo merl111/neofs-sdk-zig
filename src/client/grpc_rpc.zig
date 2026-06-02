@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 const request = @import("request.zig");
 const signer_mod = @import("../crypto/signer.zig");
 const accounting = @import("../accounting/decimal.zig");
@@ -21,6 +22,8 @@ const object_pb = @import("../proto/gen/object/types.pb.zig");
 const acl_pb = @import("../proto/gen/acl/types.pb.zig");
 const refs_pb = @import("../proto/gen/refs/types.pb.zig");
 const reputation_pb = @import("../proto/gen/reputation/types.pb.zig");
+const search_mod = @import("../object/search.zig");
+const node_info_mod = @import("../netmap/node_info.zig");
 
 pub fn grpcUnary(
     allocator: std.mem.Allocator,
@@ -181,6 +184,8 @@ pub fn containerPut(
     container: stable.Container,
 ) ![32]u8 {
     const container_sig = try container_init.signContainer(allocator, signer_key, container);
+    errdefer allocator.free(container_sig.key);
+    errdefer allocator.free(container_sig.sign);
     const body = try container_init.toPutRequestBody(allocator, container, container_sig);
     const req = container_pb.PutRequest{
         .body = body,
@@ -306,7 +311,7 @@ pub fn containerList(
     var resp = try grpcUnary(allocator, grpc_client, signed, "/neo.fs.v2.container.ContainerService/List", container_pb.ListResponse);
     defer resp.deinit(allocator);
     try failure.validate(allocator, resp.meta_header);
-    var out: std.ArrayList([32]u8) = .{};
+    var out: std.ArrayList([32]u8) = .empty;
     if (resp.body) |body| {
         for (body.container_ids.items) |cid| {
             if (cid.value.len >= 32) {
@@ -334,7 +339,7 @@ pub fn containerListWithSigner(
     var resp = try grpcUnary(allocator, grpc_client, signed, "/neo.fs.v2.container.ContainerService/List", container_pb.ListResponse);
     defer resp.deinit(allocator);
     try failure.validate(allocator, resp.meta_header);
-    var out: std.ArrayList([32]u8) = .{};
+    var out: std.ArrayList([32]u8) = .empty;
     if (resp.body) |body| {
         for (body.container_ids.items) |cid| {
             if (cid.value.len >= 32) {
@@ -384,18 +389,52 @@ pub fn containerDeleteWithSigner(
     try failure.validate(allocator, resp.meta_header);
 }
 
-pub fn containerEaclGet(allocator: std.mem.Allocator, grpc_client: anytype, id: [32]u8) ![]u8 {
-    var req = container_pb.GetExtendedACLRequest{
+pub fn containerEaclGet(allocator: std.mem.Allocator, grpc_client: anytype, signer_key: []const u8, id: [32]u8) ![]u8 {
+    const req = container_pb.GetExtendedACLRequest{
         .body = .{ .container_id = try request.makeContainerID(allocator, id) },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
-    defer req.deinit(allocator);
-    var resp = try grpcUnary(allocator, grpc_client, req, "/neo.fs.v2.container.ContainerService/GetExtendedACL", container_pb.GetExtendedACLResponse);
+    var signed = try request.signRequestMessage(allocator, signer_key, req, req.meta_header.?);
+    defer signed.deinit(allocator);
+    var resp = try grpcUnary(allocator, grpc_client, signed, "/neo.fs.v2.container.ContainerService/GetExtendedACL", container_pb.GetExtendedACLResponse);
     defer resp.deinit(allocator);
     try failure.validate(allocator, resp.meta_header);
     const body = resp.body orelse return try allocator.dupe(u8, "");
     const eacl = body.eacl orelse return try allocator.dupe(u8, "");
     return try request.encodeMessage(allocator, eacl);
+}
+
+fn signEaclTable(
+    allocator: std.mem.Allocator,
+    signer_key: []const u8,
+    table: acl_pb.EACLTable,
+) !refs_pb.SignatureRFC6979 {
+    const signing_mod = @import("../internal/proto/signing.zig");
+    const keys_mod = @import("../crypto/ecdsa/keys.zig");
+    const table_bytes = try signing_mod.encode(allocator, table);
+    defer allocator.free(table_bytes);
+    const secret: *const [32]u8 = signer_key[0..32];
+    const kp = try keys_mod.KeyPair.fromSecretBytes(secret);
+    const sig = try kp.sign(allocator, .ecdsa_deterministic_sha256, table_bytes);
+    return .{
+        .key = try allocator.dupe(u8, sig.key),
+        .sign = try allocator.dupe(u8, sig.value),
+    };
+}
+
+fn signEaclTableWithSigner(
+    allocator: std.mem.Allocator,
+    signer: signer_mod.Signer,
+    table: acl_pb.EACLTable,
+) !refs_pb.SignatureRFC6979 {
+    const signing_mod = @import("../internal/proto/signing.zig");
+    const table_bytes = try signing_mod.encode(allocator, table);
+    defer allocator.free(table_bytes);
+    const sig = try signer.sign(allocator, table_bytes);
+    return .{
+        .key = try allocator.dupe(u8, sig.key),
+        .sign = try allocator.dupe(u8, sig.value),
+    };
 }
 
 pub fn containerEaclSet(allocator: std.mem.Allocator, grpc_client: anytype, signer_key: []const u8, id: [32]u8, eacl_bin: []const u8) !void {
@@ -405,10 +444,12 @@ pub fn containerEaclSet(allocator: std.mem.Allocator, grpc_client: anytype, sign
     };
     if (table.container_id) |*existing| existing.deinit(allocator);
     table.container_id = try request.makeContainerID(allocator, id);
+    const eacl_sig = try signEaclTable(allocator, signer_key, table);
 
     const req = container_pb.SetExtendedACLRequest{
         .body = .{
             .eacl = table,
+            .signature = eacl_sig,
         },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
@@ -432,10 +473,12 @@ pub fn containerEaclSetWithSigner(
     };
     if (table.container_id) |*existing| existing.deinit(allocator);
     table.container_id = try request.makeContainerID(allocator, id);
+    const eacl_sig = try signEaclTableWithSigner(allocator, signer, table);
 
     const req = container_pb.SetExtendedACLRequest{
         .body = .{
             .eacl = table,
+            .signature = eacl_sig,
         },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
@@ -453,7 +496,7 @@ pub fn setContainerAttribute(allocator: std.mem.Allocator, grpc_client: anytype,
                 .container_id = try request.makeContainerID(allocator, id),
                 .attribute = try allocator.dupe(u8, attr_key),
                 .value = try allocator.dupe(u8, value),
-                .valid_until = @intCast(std.time.timestamp() + 3600),
+                .valid_until = @intCast(clock.timestamp() + 3600),
             },
         },
     };
@@ -468,7 +511,7 @@ pub fn removeContainerAttribute(allocator: std.mem.Allocator, grpc_client: anyty
             .parameters = .{
                 .container_id = try request.makeContainerID(allocator, id),
                 .attribute = try allocator.dupe(u8, attr_key),
-                .valid_until = @intCast(std.time.timestamp() + 3600),
+                .valid_until = @intCast(clock.timestamp() + 3600),
             },
         },
     };
@@ -653,15 +696,32 @@ pub fn buildObjectPutRequestWithSessionV2(
     return try request.signRequestMessage(allocator, signer_key, req, req.meta_header.?);
 }
 
-pub fn objectHash(allocator: std.mem.Allocator, grpc_client: anytype, container_id: [32]u8, object_id: [32]u8) ![32]u8 {
+pub const HashRange = struct {
+    offset: u64,
+    length: u64,
+};
+
+pub fn objectHash(
+    allocator: std.mem.Allocator,
+    grpc_client: anytype,
+    container_id: [32]u8,
+    object_id: [32]u8,
+    ranges: []const HashRange,
+) ![32]u8 {
     var req = object_pb.GetRangeHashRequest{
         .body = .{
             .address = try request.makeAddress(allocator, container_id, object_id),
-            .ranges = .{},
+            .ranges = .empty,
         },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
-    defer req.deinit(allocator);
+    errdefer req.deinit(allocator);
+    for (ranges) |r| {
+        try req.body.?.ranges.append(allocator, .{
+            .offset = r.offset,
+            .length = r.length,
+        });
+    }
     var resp = try grpcUnary(allocator, grpc_client, req, "/neo.fs.v2.object.ObjectService/GetRangeHash", object_pb.GetRangeHashResponse);
     defer resp.deinit(allocator);
     try failure.validate(allocator, resp.meta_header);
@@ -674,20 +734,86 @@ pub fn objectHash(allocator: std.mem.Allocator, grpc_client: anytype, container_
     return out;
 }
 
+pub const ParsedNetmapSnapshot = struct {
+    epoch: u64,
+    nodes: []node_info_mod.NodeInfo,
+
+    pub fn deinit(self: *ParsedNetmapSnapshot, allocator: std.mem.Allocator) void {
+        for (self.nodes) |*n| n.deinit(allocator);
+        allocator.free(self.nodes);
+    }
+};
+
+pub fn netMapSnapshotParsed(allocator: std.mem.Allocator, grpc_client: anytype) !ParsedNetmapSnapshot {
+    const req = netmap_pb.NetmapSnapshotRequest{};
+    var resp = try grpcUnary(allocator, grpc_client, req, "/neo.fs.v2.netmap.NetmapService/NetmapSnapshot", netmap_pb.NetmapSnapshotResponse);
+    defer resp.deinit(allocator);
+    try failure.validate(allocator, resp.meta_header);
+    const body = resp.body orelse return error.InvalidResponse;
+    const nm = body.netmap orelse return error.InvalidResponse;
+    var out: std.ArrayList(node_info_mod.NodeInfo) = .empty;
+    errdefer {
+        for (out.items) |*n| n.deinit(allocator);
+        out.deinit(allocator);
+    }
+    for (nm.nodes.items) |pn| {
+        var ni = node_info_mod.NodeInfo.init(allocator);
+        if (pn.public_key.len > 0) {
+            ni.public_key = try allocator.dupe(u8, pn.public_key);
+        }
+        for (pn.attributes.items) |attr| {
+            try ni.setAttribute(allocator, attr.key, attr.value);
+        }
+        for (pn.addresses.items) |addr| {
+            try ni.setAttribute(allocator, "Address", addr);
+        }
+        try out.append(allocator, ni);
+    }
+    return .{
+        .epoch = nm.epoch,
+        .nodes = try out.toOwnedSlice(allocator),
+    };
+}
+
+fn appendSearchFilters(
+    allocator: std.mem.Allocator,
+    body: *object_pb.SearchV2Request.Body,
+    filters: []const search_mod.Filter,
+) !void {
+    for (filters) |f| {
+        const match_type: object_pb.MatchType = switch (f.match) {
+            .eq => .STRING_EQUAL,
+            .ne => .STRING_NOT_EQUAL,
+            .prefix => .COMMON_PREFIX,
+        };
+        try body.filters.append(allocator, .{
+            .match_type = match_type,
+            .key = try allocator.dupe(u8, f.key),
+            .value = try allocator.dupe(u8, f.value),
+        });
+    }
+}
+
 pub fn searchObjects(allocator: std.mem.Allocator, grpc_client: anytype, container_id: [32]u8) ![][32]u8 {
     var reader = try object_stream.objectSearchInit(allocator, grpc_client, container_id);
     defer reader.deinit();
-    var out: std.ArrayList([32]u8) = .{};
+    var out: std.ArrayList([32]u8) = .empty;
     while (try reader.nextObjectID()) |id| {
         try out.append(allocator, id);
     }
     return out.toOwnedSlice(allocator);
 }
 
-pub fn searchObjectsV2(allocator: std.mem.Allocator, grpc_client: anytype, container_id: [32]u8) ![][32]u8 {
-    const entries = try searchObjectsDetailed(allocator, grpc_client, container_id, &.{ "Name", "FileName" });
+pub fn searchObjectsV2(
+    allocator: std.mem.Allocator,
+    grpc_client: anytype,
+    signer_key: []const u8,
+    container_id: [32]u8,
+) ![][32]u8 {
+    const list_all: search_mod.Filter = .{ .key = "FileName", .value = "", .match = .prefix };
+    const entries = try searchObjectsDetailed(allocator, grpc_client, signer_key, container_id, &.{ "FileName", "Name" }, &.{list_all});
     defer deinitSearchObjectEntries(allocator, entries);
-    var out: std.ArrayList([32]u8) = .{};
+    var out: std.ArrayList([32]u8) = .empty;
     for (entries) |entry| {
         try out.append(allocator, entry.id);
     }
@@ -710,29 +836,37 @@ pub fn deinitSearchObjectEntries(allocator: std.mem.Allocator, entries: []Search
 pub fn searchObjectsDetailed(
     allocator: std.mem.Allocator,
     grpc_client: anytype,
+    signer_key: []const u8,
     container_id: [32]u8,
     attribute_names: []const []const u8,
+    filters: []const search_mod.Filter,
 ) ![]SearchObjectEntry {
-    var body = object_pb.SearchV2Request.Body{
-        .container_id = .{ .value = try allocator.dupe(u8, &container_id) },
-        .attributes = .{},
-    };
-    errdefer body.deinit(allocator);
-    for (attribute_names) |name| {
-        try body.attributes.append(allocator, try allocator.dupe(u8, name));
-    }
-
     var req = object_pb.SearchV2Request{
-        .body = body,
+        .body = .{
+            .container_id = .{ .value = try allocator.dupe(u8, &container_id) },
+            .attributes = .empty,
+            .version = 1,
+            .count = 1000,
+        },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
-    defer req.deinit(allocator);
-    var resp = try grpcUnary(allocator, grpc_client, req, "/neo.fs.v2.object.ObjectService/SearchV2", object_pb.SearchV2Response);
+    errdefer req.deinit(allocator);
+    for (attribute_names) |name| {
+        try req.body.?.attributes.append(allocator, try allocator.dupe(u8, name));
+    }
+    if (req.body) |*body| {
+        try appendSearchFilters(allocator, body, filters);
+    }
+
+    var signed = try request.signRequestMessage(allocator, signer_key, req, req.meta_header.?);
+    defer signed.deinit(allocator);
+    req = .{};
+    var resp = try grpcUnary(allocator, grpc_client, signed, "/neo.fs.v2.object.ObjectService/SearchV2", object_pb.SearchV2Response);
     defer resp.deinit(allocator);
     try failure.validate(allocator, resp.meta_header);
     const resp_body = resp.body orelse return error.InvalidResponse;
 
-    var out: std.ArrayList(SearchObjectEntry) = .{};
+    var out: std.ArrayList(SearchObjectEntry) = .empty;
     errdefer {
         for (out.items) |entry| {
             for (entry.attribute_values) |value| allocator.free(value);
@@ -747,7 +881,7 @@ pub fn searchObjectsDetailed(
         var id: [32]u8 = undefined;
         @memcpy(&id, oid.value[0..32]);
 
-        var values: std.ArrayList([]const u8) = .{};
+        var values: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (values.items) |value| allocator.free(value);
             values.deinit(allocator);
@@ -769,6 +903,7 @@ pub fn searchObjectsDetailedWithSessionV2(
     signer_key: []const u8,
     container_id: [32]u8,
     attribute_names: []const []const u8,
+    filters: []const search_mod.Filter,
     session_token_v2: session_pb.SessionTokenV2,
 ) ![]SearchObjectEntry {
     // Build the request inline so its body is owned by the (single) `signed`
@@ -784,13 +919,16 @@ pub fn searchObjectsDetailedWithSessionV2(
             // Server rejects count=0 with "zero count". 1000 is the documented
             // max page size for SearchV2.
             .count = 1000,
-            .attributes = .{},
+            .attributes = .empty,
         },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
     errdefer req.deinit(allocator);
     for (attribute_names) |name| {
         try req.body.?.attributes.append(allocator, try allocator.dupe(u8, name));
+    }
+    if (req.body) |*body| {
+        try appendSearchFilters(allocator, body, filters);
     }
     req.meta_header.?.session_token_v2 = try session_token_v2.dupe(allocator);
 
@@ -803,7 +941,7 @@ pub fn searchObjectsDetailedWithSessionV2(
     try failure.validate(allocator, resp.meta_header);
     const resp_body = resp.body orelse return error.InvalidResponse;
 
-    var out: std.ArrayList(SearchObjectEntry) = .{};
+    var out: std.ArrayList(SearchObjectEntry) = .empty;
     errdefer {
         for (out.items) |entry| {
             for (entry.attribute_values) |value| allocator.free(value);
@@ -818,7 +956,7 @@ pub fn searchObjectsDetailedWithSessionV2(
         var id: [32]u8 = undefined;
         @memcpy(&id, oid.value[0..32]);
 
-        var values: std.ArrayList([]const u8) = .{};
+        var values: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (values.items) |value| allocator.free(value);
             values.deinit(allocator);
@@ -836,7 +974,7 @@ pub fn searchObjectsDetailedWithSessionV2(
 
 pub fn announceLocalTrust(allocator: std.mem.Allocator, grpc_client: anytype, signer_key: []const u8, epoch: u64) !void {
     const req = reputation_pb.AnnounceLocalTrustRequest{
-        .body = .{ .epoch = epoch, .trusts = .{} },
+        .body = .{ .epoch = epoch, .trusts = .empty },
         .meta_header = try request.defaultMetaHeader(allocator),
     };
     var signed = try request.signRequestMessage(allocator, signer_key, req, req.meta_header.?);
