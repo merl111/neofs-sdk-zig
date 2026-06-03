@@ -1,11 +1,13 @@
 const std = @import("std");
 const openssl_tls = @import("openssl_tls.zig");
 const hpack = @import("hpack.zig");
+const dns_resolve = @import("dns_resolve.zig");
 
 /// Minimal persistent HTTP/2 + gRPC client for NeoFS unary and streaming RPCs.
 pub const Client = struct {
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    io: std.Io,
+    stream: std.Io.net.Stream,
     tls: ?*TlsConnection = null,
     scheme: []const u8 = "http",
     authority: []const u8,
@@ -28,12 +30,12 @@ pub const Client = struct {
     /// Accumulated HPACK payload from response HEADERS frames received while
     /// we were still sending. Replayed by the read loop as if the frame came
     /// in normally.
-    pending_response_hpack: std.ArrayList(u8) = .{},
+    pending_response_hpack: std.ArrayList(u8) = .empty,
     pending_response_hpack_end_stream: bool = false,
     /// DATA payloads received on the active stream while we were still
     /// sending. These must be replayed to the ServerStream once the send
     /// phase completes, otherwise the response body is silently dropped.
-    pending_response_data: std.ArrayList(u8) = .{},
+    pending_response_data: std.ArrayList(u8) = .empty,
     /// HPACK decoder state, shared across all streams on this connection so
     /// dynamic-table indices (e.g. 0xbf/0xbe in compressed trailers) resolve
     /// back to entries inserted by earlier responses.
@@ -44,12 +46,13 @@ pub const Client = struct {
     last_grpc_message: ?[]u8 = null,
     last_http_status: u16 = 0,
 
-    pub fn connect(allocator: std.mem.Allocator, host: []const u8, port: u16, tls: bool) !Client {
-        const stream = try std.net.tcpConnectToHost(allocator, host, port);
+    pub fn connect(allocator: std.mem.Allocator, io: std.Io, host: []const u8, port: u16, tls: bool) !Client {
+        const stream = try dns_resolve.connectTcp(io, host, port);
         const authority = try std.fmt.allocPrint(allocator, "{s}:{d}", .{ host, port });
         errdefer allocator.free(authority);
         var client = Client{
             .allocator = allocator,
+            .io = io,
             .stream = stream,
             .scheme = if (tls) "https" else "http",
             .authority = authority,
@@ -73,7 +76,7 @@ pub const Client = struct {
             tls.deinit(self.allocator);
             self.tls = null;
         }
-        self.stream.close();
+        self.stream.close(self.io);
     }
 
     pub fn unaryCall(self: *Client, path: []const u8, request: []const u8) ![]u8 {
@@ -93,7 +96,7 @@ pub const Client = struct {
         const stream_id = self.next_stream_id;
         self.next_stream_id += 2;
 
-        var headers_payload: std.ArrayList(u8) = .{};
+        var headers_payload: std.ArrayList(u8) = .empty;
         defer headers_payload.deinit(self.allocator);
         try writeRequestHeaders(self.allocator, &headers_payload, self.scheme, self.authority, path);
         try self.writeFrame(.headers, stream_id, .{ .end_stream = false, .end_headers = true }, headers_payload.items);
@@ -118,7 +121,7 @@ pub const Client = struct {
             // before we finish streaming. After that, sending more DATA is
             // both pointless and may trigger a real protocol error.
             if (self.peer_done_sending_stream) break;
-            var grpc_msg: std.ArrayList(u8) = .{};
+            var grpc_msg: std.ArrayList(u8) = .empty;
             defer grpc_msg.deinit(self.allocator);
             try appendGrpcMessage(&grpc_msg, self.allocator, chunk);
             const last = i == chunks.len - 1;
@@ -128,7 +131,7 @@ pub const Client = struct {
         var stream = ServerStream{
             .client = self,
             .stream_id = stream_id,
-            .recv_buf = .{},
+            .recv_buf = .empty,
             .finished = self.peer_done_sending_stream and self.pending_response_hpack_end_stream,
         };
         defer stream.deinit();
@@ -181,12 +184,12 @@ pub const Client = struct {
         const stream_id = self.next_stream_id;
         self.next_stream_id += 2;
 
-        var headers_payload: std.ArrayList(u8) = .{};
+        var headers_payload: std.ArrayList(u8) = .empty;
         defer headers_payload.deinit(self.allocator);
         try writeRequestHeaders(self.allocator, &headers_payload, self.scheme, self.authority, path);
         try self.writeFrame(.headers, stream_id, .{ .end_stream = false, .end_headers = true }, headers_payload.items);
 
-        var grpc_msg: std.ArrayList(u8) = .{};
+        var grpc_msg: std.ArrayList(u8) = .empty;
         defer grpc_msg.deinit(self.allocator);
         try appendGrpcMessage(&grpc_msg, self.allocator, request);
         try self.writeFrame(.data, stream_id, .{ .end_stream = true, .end_headers = false }, grpc_msg.items);
@@ -194,7 +197,7 @@ pub const Client = struct {
         return .{
             .client = self,
             .stream_id = stream_id,
-            .recv_buf = .{},
+            .recv_buf = .empty,
             .finished = false,
         };
     }
@@ -531,11 +534,9 @@ pub const Client = struct {
             try tls.conn.readAll(buf);
             return;
         }
-        var off: usize = 0;
-        while (off < buf.len) {
-            const n = try self.stream.readAtLeast(buf[off..], buf.len - off);
-            off += n;
-        }
+        var read_buf: [8192]u8 = undefined;
+        var reader = std.Io.net.Stream.reader(self.stream, self.io, &read_buf);
+        try std.Io.Reader.readSliceAll(&reader.interface, buf);
     }
 
     fn writeAll(self: *Client, data: []const u8) !void {
@@ -543,7 +544,9 @@ pub const Client = struct {
             try tls.conn.writeAll(data);
             return;
         }
-        try self.stream.writeAll(data);
+        var write_buf: [8192]u8 = undefined;
+        var writer = std.Io.net.Stream.writer(self.stream, self.io, &write_buf);
+        try std.Io.Writer.writeAll(&writer.interface, data);
     }
 
     fn readFrame(self: *Client) !Frame {
@@ -568,7 +571,7 @@ pub const Client = struct {
 const TlsConnection = struct {
     conn: openssl_tls.Connection,
 
-    fn init(allocator: std.mem.Allocator, stream: std.net.Stream, host: []const u8) !*TlsConnection {
+    fn init(allocator: std.mem.Allocator, stream: std.Io.net.Stream, host: []const u8) !*TlsConnection {
         const host_z = try allocator.allocSentinel(u8, host.len, 0);
         errdefer allocator.free(host_z);
         @memcpy(host_z, host);
@@ -641,11 +644,9 @@ fn extractGrpcMessage(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 }
 
 test "take multiple grpc messages from buffer" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
-    var buf: std.ArrayList(u8) = .{};
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
     try appendGrpcMessage(&buf, allocator, "first");
     try appendGrpcMessage(&buf, allocator, "second");
@@ -662,11 +663,9 @@ test "take multiple grpc messages from buffer" {
 }
 
 test "extract single grpc message" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
-    var buf: std.ArrayList(u8) = .{};
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
     try appendGrpcMessage(&buf, allocator, "payload");
 

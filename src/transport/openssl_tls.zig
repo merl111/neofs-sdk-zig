@@ -9,7 +9,7 @@ pub const Connection = struct {
     ssl: *c.SSL,
     ctx: *c.SSL_CTX,
 
-    pub fn init(host: [:0]const u8, stream: std.net.Stream) !Connection {
+    pub fn init(host: [:0]const u8, stream: std.Io.net.Stream) !Connection {
         _ = c.OPENSSL_init_ssl(c.OPENSSL_INIT_LOAD_SSL_STRINGS | c.OPENSSL_INIT_LOAD_CRYPTO_STRINGS, null);
 
         const ctx = c.SSL_CTX_new(c.TLS_client_method()) orelse return error.TlsInitializationFailed;
@@ -26,7 +26,7 @@ pub const Connection = struct {
         const ssl = c.SSL_new(ctx) orelse return error.TlsInitializationFailed;
         errdefer _ = c.SSL_free(ssl);
 
-        if (c.SSL_set_fd(ssl, @intCast(stream.handle)) != 1) return error.TlsInitializationFailed;
+        if (c.SSL_set_fd(ssl, @intCast(stream.socket.handle)) != 1) return error.TlsInitializationFailed;
         if (host.len > 0 and c.SSL_set_tlsext_host_name(ssl, host.ptr) != 1) {
             return error.TlsInitializationFailed;
         }

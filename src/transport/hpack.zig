@@ -5,7 +5,7 @@ const std = @import("std");
 /// (grpc-status, grpc-message).
 pub const Decoder = struct {
     allocator: std.mem.Allocator,
-    entries: std.ArrayList(Entry) = .{},
+    entries: std.ArrayList(Entry) = .empty,
     max_size: usize = 4096,
     used_size: usize = 0,
 
@@ -30,7 +30,7 @@ pub const Decoder = struct {
     /// Decode an HPACK header block fragment. The returned headers own their
     /// memory and must be freed by `freeHeaders`.
     pub fn decode(self: *Decoder, input: []const u8) ![]Header {
-        var headers: std.ArrayList(Header) = .{};
+        var headers: std.ArrayList(Header) = .empty;
         errdefer {
             for (headers.items) |h| {
                 self.allocator.free(h.name);
@@ -161,7 +161,7 @@ fn readString(allocator: std.mem.Allocator, input: []const u8, p: *usize) ![]u8 
 }
 
 fn decodeHuffman(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
-    var out: std.ArrayList(u8) = .{};
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var code: u64 = 0;
     var code_bits: u8 = 0;
