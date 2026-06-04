@@ -13,7 +13,12 @@ pub const Token = struct {
     exp: u64 = 0,
     iat: u64 = 0,
     container_id: ?[32]u8 = null,
+    eacl_table_bin: ?[]const u8 = null,
     signature: ?sig.Signature = null,
+
+    pub fn setEaclTableBin(self: *Token, bin: []const u8) void {
+        self.eacl_table_bin = bin;
+    }
 
     pub fn validAt(self: Token, epoch: u64) bool {
         if (self.nbf == 0 and self.iat == 0 and self.exp == 0) return epoch == 0;
@@ -61,6 +66,12 @@ pub const Token = struct {
         }
         if (lifetime_set) {
             body.lifetime = .{ .exp = self.exp, .nbf = self.nbf, .iat = self.iat };
+        }
+        if (self.eacl_table_bin) |bin| {
+            var reader = std.Io.Reader.fixed(bin);
+            var table = try acl_pb.EACLTable.decode(&reader, allocator);
+            errdefer table.deinit(allocator);
+            body.eacl_table = table;
         }
         return body;
     }

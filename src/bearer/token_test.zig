@@ -39,9 +39,7 @@ test "assertUser restricts target owner" {
 }
 
 test "marshal unmarshal round-trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var pubkey: [33]u8 = undefined;
     @memset(&pubkey, 0x02);
