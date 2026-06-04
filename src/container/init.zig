@@ -1,4 +1,6 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
+const csprng = @import("../crypto/csprng.zig");
 const version = @import("../version/version.zig");
 const user = @import("../user/id.zig");
 const keys = @import("../crypto/ecdsa/keys.zig");
@@ -43,7 +45,7 @@ pub fn newContainerWithOptions(
 
 pub fn randomNonce(allocator: std.mem.Allocator) ![]u8 {
     var nonce: [16]u8 = undefined;
-    std.crypto.random.bytes(&nonce);
+    csprng.randomBytes(&nonce);
     // NeoFS requires RFC 4122 UUID v4 (same as Go's uuid.New()).
     nonce[6] = (nonce[6] & 0x0F) | 0x40;
     nonce[8] = (nonce[8] & 0x3F) | 0x80;
@@ -59,7 +61,7 @@ pub fn newContainer(
     const v = version.current();
     const name_value = try allocator.dupe(u8, name);
     errdefer allocator.free(name_value);
-    const ts = try std.fmt.allocPrint(allocator, "{d}", .{std.time.timestamp()});
+    const ts = try std.fmt.allocPrint(allocator, "{d}", .{clock.timestamp()});
     errdefer allocator.free(ts);
 
     const attrs = try allocator.alloc(stable.ContainerAttribute, 2);
@@ -129,7 +131,7 @@ pub fn signContainerID(
 }
 
 fn appendPbFilter(allocator: std.mem.Allocator, out: *std.ArrayList(netmap_pb.Filter), f: stable.Filter) !void {
-    var subs: std.ArrayList(netmap_pb.Filter) = .{};
+    var subs: std.ArrayList(netmap_pb.Filter) = .empty;
     errdefer subs.deinit(allocator);
     for (f.filters) |sub| {
         try appendPbFilter(allocator, &subs, sub);
@@ -171,7 +173,7 @@ pub fn toPutRequestBody(
     container_signature: refs_pb.SignatureRFC6979,
 ) !container_pb.PutRequest.Body {
     const v = container.version orelse return error.MissingVersion;
-    var attrs: std.ArrayList(container_pb.Container.Attribute) = .{};
+    var attrs: std.ArrayList(container_pb.Container.Attribute) = .empty;
     errdefer {
         for (attrs.items) |a| {
             allocator.free(a.key);
@@ -185,13 +187,13 @@ pub fn toPutRequestBody(
             .value = try allocator.dupe(u8, a.value),
         });
     }
-    var replicas: std.ArrayList(netmap_pb.Replica) = .{};
+    var replicas: std.ArrayList(netmap_pb.Replica) = .empty;
     errdefer replicas.deinit(allocator);
-    var selectors: std.ArrayList(netmap_pb.Selector) = .{};
+    var selectors: std.ArrayList(netmap_pb.Selector) = .empty;
     errdefer selectors.deinit(allocator);
-    var filters: std.ArrayList(netmap_pb.Filter) = .{};
+    var filters: std.ArrayList(netmap_pb.Filter) = .empty;
     errdefer filters.deinit(allocator);
-    var ec_rules: std.ArrayList(netmap_pb.PlacementPolicy.ECRule) = .{};
+    var ec_rules: std.ArrayList(netmap_pb.PlacementPolicy.ECRule) = .empty;
     errdefer ec_rules.deinit(allocator);
     if (container.placement_policy) |p| {
         for (p.replicas) |r| {
@@ -234,19 +236,15 @@ pub fn encodeID(allocator: std.mem.Allocator, id: [32]u8) ![]u8 {
 }
 
 test "random nonce is uuid v4" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const nonce = try randomNonce(gpa.allocator());
-    defer gpa.allocator().free(nonce);
+    const nonce = try randomNonce(std.testing.allocator);
+    defer std.testing.allocator.free(nonce);
     try std.testing.expectEqual(@as(usize, 16), nonce.len);
     try std.testing.expectEqual(@as(u8, 4), nonce[6] >> 4);
     try std.testing.expectEqual(@as(u8, 0x80), nonce[8] & 0xC0);
 }
 
 test "new container stable marshal size is reasonable" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const owner = user.ID.fromCompressedPublicKey([_]u8{0x02} ** 33);
     const nonce = try randomNonce(allocator);
     defer allocator.free(nonce);
@@ -257,9 +255,7 @@ test "new container stable marshal size is reasonable" {
 }
 
 test "new container has placement policy" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const owner = user.ID.fromCompressedPublicKey([_]u8{0x02} ** 33);
     const nonce = try randomNonce(allocator);
     defer allocator.free(nonce);
@@ -270,9 +266,7 @@ test "new container has placement policy" {
 }
 
 test "select policy encodes in put request body" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = false }){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const owner = user.ID.fromCompressedPublicKey([_]u8{0x02} ** 33);
     const nonce = try randomNonce(allocator);
     defer allocator.free(nonce);
@@ -299,7 +293,8 @@ test "select policy encodes in put request body" {
     defer deinitContainer(allocator, c);
 
     const container_sig = refs_pb.SignatureRFC6979{ .key = "pub", .sign = "sig" };
-    const body = try toPutRequestBody(allocator, c, container_sig);
+    var body = try toPutRequestBody(allocator, c, container_sig);
+    defer body.deinit(allocator);
     const container = body.container orelse return error.MissingContainer;
     const pp = container.placement_policy orelse return error.MissingPlacementPolicy;
     try std.testing.expectEqual(@as(usize, 1), pp.selectors.items.len);
