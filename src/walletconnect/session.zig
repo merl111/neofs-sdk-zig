@@ -19,7 +19,7 @@ pub const Session = struct {
     }
 
     pub fn toJson(self: Session, allocator: std.mem.Allocator) ![]u8 {
-        var methods = std.ArrayList([]const u8){};
+        var methods = std.ArrayList([]const u8).empty;
         defer methods.deinit(allocator);
         for (self.methods.items) |m| try methods.append(allocator, m);
         var w: std.Io.Writer.Allocating = .init(allocator);
@@ -35,16 +35,16 @@ pub const Session = struct {
     }
 };
 
-pub fn saveSession(path: []const u8, session: Session, allocator: std.mem.Allocator) !void {
+pub fn saveSession(path: []const u8, session: Session, io: std.Io, allocator: std.mem.Allocator) !void {
     const json = try session.toJson(allocator);
     defer allocator.free(json);
-    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(json);
+    const file = try std.Io.Dir.createFileAbsolute(io, path, .{ .truncate = true });
+    defer file.close(io);
+    try std.Io.File.writeStreamingAll(file, io, json);
 }
 
-pub fn loadSession(path: []const u8, allocator: std.mem.Allocator) !?Session {
-    const data = std.fs.cwd().readFileAlloc(allocator, path, 1 << 20) catch |err| switch (err) {
+pub fn loadSession(path: []const u8, io: std.Io, allocator: std.mem.Allocator) !?Session {
+    const data = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, std.Io.Limit.limited(1 << 20)) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };

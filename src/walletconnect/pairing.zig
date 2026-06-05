@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 const wc_crypto = @import("crypto.zig");
 
 pub const Pairing = struct {
@@ -19,7 +20,7 @@ pub const compatibility_version: u8 = 3;
 pub fn newPairing(allocator: std.mem.Allocator, now: u64, ttl_secs: u64) !Pairing {
     const sym_key_raw = try allocator.alloc(u8, 32);
     defer allocator.free(sym_key_raw);
-    std.crypto.random.bytes(sym_key_raw);
+    csprng.randomBytes(sym_key_raw);
     const sym_key_hex = try wc_crypto.encodeHex(allocator, sym_key_raw);
     errdefer allocator.free(sym_key_hex);
     const topic = try wc_crypto.sha256Hex(allocator, sym_key_raw);
@@ -42,7 +43,7 @@ pub fn buildUri(
     pairing: Pairing,
     methods: []const []const u8,
 ) ![]u8 {
-    var methods_csv = std.ArrayList(u8){};
+    var methods_csv = std.ArrayList(u8).empty;
     defer methods_csv.deinit(allocator);
     for (methods, 0..) |m, i| {
         if (i != 0) try methods_csv.appendSlice(allocator, "],[");

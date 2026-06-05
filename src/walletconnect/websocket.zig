@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 
 const c = @cImport({
     @cInclude("openssl/ssl.h");
@@ -7,16 +8,17 @@ const c = @cImport({
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     endpoint: []u8,
     connected: bool = false,
     host: []u8 = &.{},
     path_query: []u8 = &.{},
     auth_bearer: ?[]u8 = null,
-    stream: ?std.net.Stream = null,
+    stream: ?std.Io.net.Stream = null,
     ssl: ?*c.SSL = null,
     ssl_ctx: ?*c.SSL_CTX = null,
 
-    pub fn init(allocator: std.mem.Allocator, endpoint: []const u8, auth_bearer: ?[]u8) !Client {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, endpoint: []const u8, auth_bearer: ?[]u8) !Client {
         const ep = try allocator.dupe(u8, endpoint);
         const parsed = try std.Uri.parse(ep);
         const host = parsed.host orelse return error.InvalidEndpoint;
@@ -29,6 +31,7 @@ pub const Client = struct {
         const bearer = auth_bearer;
         return .{
             .allocator = allocator,
+            .io = io,
             .endpoint = ep,
             .connected = false,
             .host = host_bytes,
@@ -43,7 +46,7 @@ pub const Client = struct {
             _ = c.SSL_free(ssl);
         }
         if (self.ssl_ctx) |ctx| _ = c.SSL_CTX_free(ctx);
-        if (self.stream) |s| s.close();
+        if (self.stream) |s| s.close(self.io);
         self.allocator.free(self.endpoint);
         self.allocator.free(self.host);
         self.allocator.free(self.path_query);
@@ -55,9 +58,10 @@ pub const Client = struct {
         if (self.connected) return;
         if (!std.mem.startsWith(u8, self.endpoint, "wss://")) return error.UnsupportedScheme;
 
-        self.stream = try std.net.tcpConnectToHost(self.allocator, self.host, 443);
+        const host_name = try std.Io.net.HostName.init(self.host);
+        self.stream = try std.Io.net.HostName.connect(host_name, self.io, 443, .{ .mode = .stream });
         errdefer if (self.stream) |s| {
-            s.close();
+            s.close(self.io);
             self.stream = null;
         };
 
@@ -69,7 +73,7 @@ pub const Client = struct {
 
         const ssl = c.SSL_new(ctx) orelse return error.TlsInitializationFailed;
         errdefer _ = c.SSL_free(ssl);
-        if (c.SSL_set_fd(ssl, @intCast(self.stream.?.handle)) != 1) return error.TlsInitializationFailed;
+        if (c.SSL_set_fd(ssl, @intCast(self.stream.?.socket.handle)) != 1) return error.TlsInitializationFailed;
 
         const host_z = try self.allocator.dupeZ(u8, self.host);
         defer self.allocator.free(host_z);
@@ -110,7 +114,7 @@ pub const Client = struct {
 
     fn handshakeWith(self: *Client, ssl: *c.SSL) !void {
         var key_raw: [16]u8 = undefined;
-        std.crypto.random.bytes(&key_raw);
+        csprng.randomBytes(&key_raw);
         const key_size = std.base64.standard.Encoder.calcSize(key_raw.len);
         var key_b64: [24]u8 = undefined;
         _ = std.base64.standard.Encoder.encode(key_b64[0..key_size], &key_raw);
@@ -158,7 +162,7 @@ pub const Client = struct {
         }
 
         var mask: [4]u8 = undefined;
-        std.crypto.random.bytes(&mask);
+        csprng.randomBytes(&mask);
         @memcpy(header[off .. off + 4], &mask);
         off += 4;
         try self.writeAll(header[0..off]);
@@ -170,7 +174,7 @@ pub const Client = struct {
     }
 
     fn recvFrame(self: *Client, allocator: std.mem.Allocator) ![]u8 {
-        var message: std.ArrayList(u8) = .{};
+        var message: std.ArrayList(u8) = .empty;
         defer message.deinit(allocator);
 
         while (true) {
@@ -232,7 +236,7 @@ pub const Client = struct {
     }
 
     fn readHttpResponseSsl(ssl: *c.SSL, allocator: std.mem.Allocator) ![]u8 {
-        var out = std.ArrayList(u8){};
+        var out = std.ArrayList(u8).empty;
         errdefer out.deinit(allocator);
         while (true) {
             var byte: [1]u8 = undefined;

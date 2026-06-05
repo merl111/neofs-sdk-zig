@@ -2,9 +2,7 @@ const std = @import("std");
 const wc_crypto = @import("crypto.zig");
 
 test "hex encode/decode round trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const input = "deadbeef";
     const raw = try wc_crypto.decodeHex(allocator, input);
@@ -19,9 +17,7 @@ test "hex encode/decode round trip" {
 }
 
 test "sha256Hex is deterministic" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const digest1 = try wc_crypto.sha256Hex(allocator, "walletconnect");
     defer allocator.free(digest1);
@@ -32,9 +28,7 @@ test "sha256Hex is deterministic" {
 }
 
 test "base64UrlNoPad round trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const payload = "hello walletconnect";
     const encoded = try wc_crypto.base64UrlNoPad(allocator, payload);
@@ -48,9 +42,7 @@ test "base64UrlNoPad round trip" {
 }
 
 test "pairing topic derives from symmetric key" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const pairing = @import("pairing.zig");
 
     const sym_key_hex = try allocator.dupe(u8, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");

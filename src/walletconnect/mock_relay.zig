@@ -48,7 +48,7 @@ pub const MockRelay = struct {
         const gop = try self.messages.getOrPut(topic);
         if (!gop.found_existing) {
             gop.key_ptr.* = try self.allocator.dupe(u8, topic);
-            gop.value_ptr.* = .{};
+            gop.value_ptr.* = .empty;
         }
         try gop.value_ptr.append(self.allocator, try self.allocator.dupe(u8, payload));
     }
@@ -66,9 +66,7 @@ pub const MockRelay = struct {
 };
 
 test "mock relay stores published payloads per topic" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var relay = MockRelay.init(allocator);
     defer relay.deinit();

@@ -1,4 +1,6 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
+const csprng = @import("../crypto/csprng.zig");
 const ws = @import("websocket.zig");
 const base58 = @import("../crypto/base58.zig");
 const wc_crypto = @import("crypto.zig");
@@ -8,6 +10,7 @@ pub const Relay = struct {
     const Ed25519 = std.crypto.sign.Ed25519;
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     endpoint: []u8,
     project_id: []u8,
     ws_client: ?ws.Client = null,
@@ -16,12 +19,13 @@ pub const Relay = struct {
     client_id: []u8,
     topic_keys: std.StringHashMap([]u8),
 
-    pub fn init(allocator: std.mem.Allocator, endpoint: []const u8, project_id: []const u8) !Relay {
-        const kp = Ed25519.KeyPair.generate();
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, endpoint: []const u8, project_id: []const u8) !Relay {
+        const kp = Ed25519.KeyPair.generate(io);
         const did = try makeDidKey(allocator, kp);
-        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const now_ms: u64 = @intCast(clock.milliTimestamp());
         return .{
             .allocator = allocator,
+            .io = io,
             .endpoint = try allocator.dupe(u8, endpoint),
             .project_id = try allocator.dupe(u8, project_id),
             .auth_key = kp,
@@ -53,7 +57,11 @@ pub const Relay = struct {
                     client.deinit();
                     self.ws_client = null;
                 }
-                std.Thread.sleep(@as(u64, attempt) * 500_000_000);
+                std.Io.sleep(
+                    self.io,
+                    std.Io.Duration.fromMilliseconds(@as(i64, @intCast(attempt)) * 500),
+                    .awake,
+                ) catch {};
             }
 
             if (self.ws_client == null) {
@@ -71,7 +79,7 @@ pub const Relay = struct {
                 else
                     try std.fmt.allocPrint(self.allocator, "{s}/?auth={s}&projectId={s}&ua={s}", .{ self.endpoint, auth_enc, pid_enc, ua_enc });
                 defer self.allocator.free(full);
-                self.ws_client = try ws.Client.init(self.allocator, full, auth_owned);
+                self.ws_client = try ws.Client.init(self.allocator, self.io, full, auth_owned);
             }
 
             self.ws_client.?.connect() catch |err| {
@@ -101,9 +109,9 @@ pub const Relay = struct {
     }
 
     pub fn waitForRpcAck(self: *Relay, allocator: std.mem.Allocator, request_id: u64, timeout_ms: u64) !void {
-        const start_ms: u64 = @intCast(std.time.milliTimestamp());
+        const start_ms: u64 = @intCast(clock.milliTimestamp());
         while (true) {
-            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            const now_ms: u64 = @intCast(clock.milliTimestamp());
             if (now_ms >= start_ms + timeout_ms) return error.RpcAckTimeout;
             const raw = try self.recv(allocator);
             defer allocator.free(raw);
@@ -122,9 +130,9 @@ pub const Relay = struct {
         });
         defer self.allocator.free(payload);
         try self.ws_client.?.sendText(payload);
-        const start_ms: u64 = @intCast(std.time.milliTimestamp());
+        const start_ms: u64 = @intCast(clock.milliTimestamp());
         while (true) {
-            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            const now_ms: u64 = @intCast(clock.milliTimestamp());
             if (now_ms >= start_ms + 5000) return error.RpcAckTimeout;
             const raw = try self.recv(allocator);
             defer allocator.free(raw);
@@ -263,7 +271,7 @@ pub const Relay = struct {
     }
 
     fn makeAuthToken(self: *Relay) ![]u8 {
-        const now: u64 = @intCast(std.time.timestamp());
+        const now: u64 = @intCast(clock.timestamp());
         const sub = try wc_crypto.randomHex(self.allocator, 16);
         defer self.allocator.free(sub);
         const header = try wc_crypto.base64UrlNoPad(self.allocator, "{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}");
@@ -344,7 +352,7 @@ fn encryptEnvelopeType0(allocator: std.mem.Allocator, sym_key_hex: []const u8, p
     @memcpy(&key, key_raw);
 
     var nonce: [ChaCha20Poly1305.nonce_length]u8 = undefined;
-    std.crypto.random.bytes(&nonce);
+    csprng.randomBytes(&nonce);
 
     const cipher = try allocator.alloc(u8, payload.len);
     defer allocator.free(cipher);
@@ -407,7 +415,7 @@ fn stringifyAlloc(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 }
 
 fn queryEncodeValue(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .{};
+    var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
     const hex = "0123456789ABCDEF";
     for (input) |c| {

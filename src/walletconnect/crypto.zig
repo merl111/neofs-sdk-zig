@@ -1,9 +1,10 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 
 pub fn randomHex(allocator: std.mem.Allocator, bytes_len: usize) ![]u8 {
     const raw = try allocator.alloc(u8, bytes_len);
     defer allocator.free(raw);
-    std.crypto.random.bytes(raw);
+    csprng.randomBytes(raw);
     const hex = try allocator.alloc(u8, bytes_len * 2);
     const alphabet = "0123456789abcdef";
     for (raw, 0..) |b, i| {

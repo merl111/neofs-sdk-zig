@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 const pairing = @import("pairing.zig");
 const relay_mod = @import("relay.zig");
 const session_mod = @import("session.zig");
@@ -20,6 +21,7 @@ pub const neon_default_methods = [_][]const u8{
 
 pub const SignClient = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     relay: relay_mod.Relay,
     chain: []u8,
     session: ?session_mod.Session = null,
@@ -29,13 +31,25 @@ pub const SignClient = struct {
     proposer_secret_key: ?[X25519.secret_length]u8 = null,
     session_topic: ?[]u8 = null,
     session_sym_key_hex: ?[]u8 = null,
+    cancel: ?*const std.atomic.Value(bool) = null,
 
-    pub fn init(allocator: std.mem.Allocator, project_id: []const u8, chain: []const u8) !SignClient {
+    pub fn setCancel(self: *SignClient, cancel: ?*const std.atomic.Value(bool)) void {
+        self.cancel = cancel;
+    }
+
+    fn pollCancel(self: *const SignClient) error{Cancelled}!void {
+        if (self.cancel) |flag| {
+            if (flag.load(.acquire)) return error.Cancelled;
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, project_id: []const u8, chain: []const u8) !SignClient {
         const pid = if (project_id.len == 0) default_project_id else project_id;
-        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const now_ms: u64 = @intCast(clock.milliTimestamp());
         return .{
             .allocator = allocator,
-            .relay = try relay_mod.Relay.init(allocator, default_relay, pid),
+            .io = io,
+            .relay = try relay_mod.Relay.init(allocator, io, default_relay, pid),
             .chain = try allocator.dupe(u8, chain),
             .request_id = now_ms * 1000,
         };
@@ -58,7 +72,7 @@ pub const SignClient = struct {
     }
 
     pub fn connect(self: *SignClient) !void {
-        const now: u64 = @intCast(std.time.timestamp());
+        const now: u64 = @intCast(clock.timestamp());
         const pair = try pairing.newPairing(self.allocator, now, 300);
         defer {
             var p = pair;
@@ -85,10 +99,10 @@ pub const SignClient = struct {
         timeout_secs: u64,
     ) !void {
         std.log.info("wc: waiting for session settle on pairing topic {s}", .{pairing_topic});
-        const start: u64 = @intCast(std.time.timestamp());
+        const start: u64 = @intCast(clock.timestamp());
         var last_republished: u64 = start;
         while (true) {
-            const now: u64 = @intCast(std.time.timestamp());
+            const now: u64 = @intCast(clock.timestamp());
             if (now >= start + timeout_secs) return error.SessionSettleTimeout;
 
             if (self.session == null and now >= last_republished + 30) {
@@ -124,7 +138,7 @@ pub const SignClient = struct {
                 std.log.info("wc: session settled topic={s} account={s}", .{ self.session.?.topic, self.session.?.account });
                 return;
             }
-            std.Thread.sleep(250 * std.time.ns_per_ms);
+            std.Io.sleep(self.io, std.Io.Duration.fromMilliseconds(250), .awake) catch {};
         }
     }
 
@@ -144,7 +158,7 @@ pub const SignClient = struct {
             .topic = try self.allocator.dupe(u8, topic),
             .chain_id = try self.allocator.dupe(u8, self.chain),
             .account = try self.allocator.dupe(u8, account),
-            .methods = .{},
+            .methods = .empty,
             .expiry = expiry,
         };
         errdefer session.deinit(self.allocator);
@@ -152,7 +166,7 @@ pub const SignClient = struct {
         self.session = session;
     }
 
-    pub fn save(self: *SignClient, path: []const u8) !void {
+    pub fn save(self: *SignClient, io: std.Io, path: []const u8) !void {
         if (self.session) |*session| {
             if (session.sym_key_hex == null and self.session_sym_key_hex != null) {
                 session.sym_key_hex = try self.allocator.dupe(u8, self.session_sym_key_hex.?);
@@ -165,7 +179,7 @@ pub const SignClient = struct {
             }
         }
         const session = self.session orelse return error.MissingSession;
-        try session_mod.saveSession(path, session, self.allocator);
+        try session_mod.saveSession(path, session, io, self.allocator);
     }
 
     /// Re-derive session encryption keys and wait for Neon to settle the session.
@@ -176,9 +190,9 @@ pub const SignClient = struct {
         timeout_secs: u64,
     ) !void {
         try self.sendSessionPropose(pairing_topic);
-        const start: i64 = @intCast(std.time.timestamp());
+        const start: i64 = @intCast(clock.timestamp());
         while (true) {
-            const now: i64 = @intCast(std.time.timestamp());
+            const now: i64 = @intCast(clock.timestamp());
             if (now >= start + @as(i64, @intCast(timeout_secs))) return error.SessionKeyRecoveryTimeout;
             const raw = try self.relay.recv(self.allocator);
             defer self.allocator.free(raw);
@@ -266,6 +280,7 @@ pub const SignClient = struct {
         const max_attempts = @max(timeout_secs * 4, 1);
         var attempts: usize = 0;
         while (attempts < max_attempts) : (attempts += 1) {
+            try self.pollCancel();
             const raw = try self.relay.tryRecv(self.allocator, 500);
             if (raw == null) continue;
             defer self.allocator.free(raw.?);
@@ -324,6 +339,7 @@ pub const SignClient = struct {
         const max_attempts = @max(timeout_secs * 2, 1);
         var attempts: usize = 0;
         while (attempts < max_attempts) : (attempts += 1) {
+            try self.pollCancel();
             const raw = try self.relay.tryRecv(self.allocator, 500);
             if (raw == null) continue;
             defer self.allocator.free(raw.?);
@@ -348,7 +364,7 @@ pub const SignClient = struct {
                 const pk = X25519.recoverPublicKey(sk) catch return error.InvalidProposerKey;
                 break :blk try hexEncodeAlloc(self.allocator, &pk);
             }
-            const kp = X25519.KeyPair.generate();
+            const kp = X25519.KeyPair.generate(self.io);
             self.proposer_secret_key = kp.secret_key;
             break :blk try hexEncodeAlloc(self.allocator, &kp.public_key);
         };
@@ -360,7 +376,7 @@ pub const SignClient = struct {
             break :blk id;
         };
         const chain = resolveProposalChain(self.chain);
-        const expiry: u64 = @as(u64, @intCast(std.time.timestamp())) + 300;
+        const expiry: u64 = @as(u64, @intCast(clock.timestamp())) + 300;
         const payload = try stringifyAlloc(self.allocator, .{
             .id = request_id,
             .jsonrpc = "2.0",
