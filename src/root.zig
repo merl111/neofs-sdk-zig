@@ -11,6 +11,7 @@ pub const crypto_wif = @import("crypto/wif.zig");
 pub const crypto_proto = @import("crypto/proto.zig");
 pub const crypto_ecdsa = @import("crypto/ecdsa/keys.zig");
 pub const refs_pb = @import("proto/gen/refs/types.pb.zig");
+pub const proto_acl = @import("proto/gen/acl/types.pb.zig");
 pub const session_pb = @import("proto/gen/session/types.pb.zig");
 pub const netmap = @import("netmap/netmap.zig");
 pub const container = @import("container/container.zig");
@@ -38,6 +39,7 @@ pub const pool = @import("pool/pool.zig");
 pub const transport = @import("transport/grpc.zig");
 pub const object_stream = @import("client/object_stream.zig");
 pub const walletconnect = @import("walletconnect/root.zig");
+pub const neo3 = @import("neo3/root.zig");
 pub const container_id = @import("container/id/id.zig");
 
 test {
@@ -48,6 +50,7 @@ test {
     _ = @import("crypto/proto.zig");
     _ = @import("crypto/ecdsa/keys.zig");
     _ = @import("transport/grpc.zig");
+    _ = @import("transport/hpack_test.zig");
     _ = @import("client/object_stream.zig");
     _ = @import("hrw/root.zig");
     _ = @import("internal/proto/stable.zig");
@@ -55,6 +58,7 @@ test {
     _ = @import("container/init.zig");
     _ = @import("session/object_session.zig");
     _ = @import("object/put.zig");
+    _ = @import("crypto/golden_test.zig");
     _ = @import("crypto/wif.zig");
     _ = @import("crypto/base58.zig");
     _ = @import("crypto/ripemd160.zig");
@@ -70,6 +74,11 @@ test {
     _ = @import("client/mock_transport.zig");
     _ = @import("client/status/failure.zig");
     _ = @import("walletconnect/crypto_test.zig");
+    _ = @import("neo3/emit.zig");
+    _ = @import("neo3/hash.zig");
+    _ = @import("neo3/transaction.zig");
+    _ = @import("neo3/http_test.zig");
+    _ = @import("neo3/deposit_test.zig");
     _ = @import("walletconnect/mock_relay.zig");
     _ = @import("tzhash/root.zig");
     _ = @import("user/id.zig");
