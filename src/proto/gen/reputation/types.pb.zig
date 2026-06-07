@@ -384,7 +384,7 @@ pub const AnnounceLocalTrustRequest = struct {
 /// Announce node's local trust information.
 pub const Body = struct {
     epoch: u64 = 0,
-    trusts: std.ArrayListUnmanaged(Trust) = .empty,
+    trusts: std.ArrayList(Trust) = .empty,
 
     pub const _desc_table = .{
         .epoch = fd(1, .{ .scalar = .uint64 }),
@@ -934,3 +934,31 @@ pub const Body = struct {
     }
 
 };
+
+/// `ReputationService` provides mechanisms for exchanging trust values with
+/// other NeoFS nodes. Nodes rate each other's reputation based on how good they
+/// process requests and set a trust level based on that rating. The trust
+/// information is passed to the next nodes to check and aggregate unless the
+/// final result is recorded.
+pub fn ReputationService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.reputation";
+        pub const service_name = "ReputationService";
+
+/// Announce local client trust information to any node in NeoFS network.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// local trust has been successfully announced;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        AnnounceLocalTrust: *const fn(userdata: *UserDataType, request: AnnounceLocalTrustRequest) ErrorSet!AnnounceLocalTrustResponse,
+/// Announce the intermediate result of the iterative algorithm for
+/// calculating the global reputation of the node in NeoFS network.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// intermediate trust estimation has been successfully announced;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        AnnounceIntermediateResult: *const fn(userdata: *UserDataType, request: AnnounceIntermediateResultRequest) ErrorSet!AnnounceIntermediateResultResponse,
+    };
+}

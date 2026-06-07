@@ -97,7 +97,7 @@ pub const Session = enum(i32) {
 pub const Status = struct {
     code: u32 = 0,
     message: []const u8 = &.{},
-    details: std.ArrayListUnmanaged(Status.Detail) = .empty,
+    details: std.ArrayList(Status.Detail) = .empty,
 
     pub const _desc_table = .{
         .code = fd(1, .{ .scalar = .uint32 }),

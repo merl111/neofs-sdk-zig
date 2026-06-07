@@ -271,7 +271,7 @@ pub const Header = struct {
     object_type: ObjectType = @enumFromInt(0),
     homomorphic_hash: ?neo_fs_v2_refs.Checksum = null,
     session_token: ?neo_fs_v2_session.SessionToken = null,
-    attributes: std.ArrayListUnmanaged(Attribute) = .empty,
+    attributes: std.ArrayList(Header.Attribute) = .empty,
     split: ?*Split = null,
     session_token_v2: ?neo_fs_v2_session.SessionTokenV2 = null,
 
@@ -489,8 +489,8 @@ pub const Split = struct {
     parent: ?neo_fs_v2_refs.ObjectID = null,
     previous: ?neo_fs_v2_refs.ObjectID = null,
     parent_signature: ?neo_fs_v2_refs.Signature = null,
-    parent_header: ?Header = null,
-    children: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    parent_header: ?*Header = null,
+    children: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
     split_id: []const u8 = &.{},
     first: ?neo_fs_v2_refs.ObjectID = null,
 
@@ -2155,7 +2155,7 @@ pub const SearchRequest = struct {
 pub const Body = struct {
     container_id: ?neo_fs_v2_refs.ContainerID = null,
     version: u32 = 0,
-    filters: std.ArrayListUnmanaged(SearchFilter) = .empty,
+    filters: std.ArrayList(SearchFilter) = .empty,
 
     pub const _desc_table = .{
         .container_id = fd(1, .submessage),
@@ -2297,7 +2297,7 @@ pub const SearchResponse = struct {
 
 /// Object Search response body
 pub const Body = struct {
-    id_list: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    id_list: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
 
     pub const _desc_table = .{
         .id_list = fd(1, .{ .repeated = .submessage}),
@@ -2439,10 +2439,10 @@ pub const SearchV2Request = struct {
 pub const Body = struct {
     container_id: ?neo_fs_v2_refs.ContainerID = null,
     version: u32 = 0,
-    filters: std.ArrayListUnmanaged(SearchFilter) = .empty,
+    filters: std.ArrayList(SearchFilter) = .empty,
     cursor: []const u8 = &.{},
     count: u32 = 0,
-    attributes: std.ArrayListUnmanaged([]const u8) = .empty,
+    attributes: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .container_id = fd(1, .submessage),
@@ -2588,7 +2588,7 @@ pub const SearchV2Response = struct {
 /// OID with additional requested metadata.
 pub const OIDWithMeta = struct {
     id: ?neo_fs_v2_refs.ObjectID = null,
-    attributes: std.ArrayListUnmanaged([]const u8) = .empty,
+    attributes: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .id = fd(1, .submessage),
@@ -2657,7 +2657,7 @@ pub const OIDWithMeta = struct {
 
 /// Main result structure.
 pub const Body = struct {
-    result: std.ArrayListUnmanaged(SearchV2Response.OIDWithMeta) = .empty,
+    result: std.ArrayList(SearchV2Response.OIDWithMeta) = .empty,
     cursor: []const u8 = &.{},
 
     pub const _desc_table = .{
@@ -3182,7 +3182,7 @@ pub const GetRangeHashRequest = struct {
 /// Get hash of object's payload part request body.
 pub const Body = struct {
     address: ?neo_fs_v2_refs.Address = null,
-    ranges: std.ArrayListUnmanaged(Range) = .empty,
+    ranges: std.ArrayList(Range) = .empty,
     salt: []const u8 = &.{},
     type: neo_fs_v2_refs.ChecksumType = @enumFromInt(0),
 
@@ -3328,7 +3328,7 @@ pub const GetRangeHashResponse = struct {
 /// Get hash of object's payload part response body.
 pub const Body = struct {
     type: neo_fs_v2_refs.ChecksumType = @enumFromInt(0),
-    hash_list: std.ArrayListUnmanaged([]const u8) = .empty,
+    hash_list: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .type = fd(1, .@"enum"),
@@ -3596,3 +3596,256 @@ pub const ReplicateResponse = struct {
     }
 
 };
+
+/// `ObjectService` provides API for manipulating objects. Object operations do
+/// not affect FS chain and are only served by nodes in P2P style.
+pub fn ObjectService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.object";
+        pub const service_name = "ObjectService";
+
+/// Receive full object structure, including Headers and payload. Response uses
+/// gRPC stream. First response message carries the object with the requested address.
+/// Chunk messages are parts of the object's payload if it is needed. All
+/// messages, except the first one, carry payload chunks. The requested object can
+/// be restored by concatenation of object message payload and all chunks
+/// keeping the receiving order.
+/// 
+/// Extended headers can change `Get` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation. DEPRECATED: header ignored by servers.
+/// * __NEOFS__NETMAP_LOOKUP_DEPTH \
+/// Will try older versions (starting from `__NEOFS__NETMAP_EPOCH` if specified or
+/// the latest one otherwise) of Network Map to find an object until the depth
+/// limit is reached. DEPRECATED: header ignored by servers.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// object has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// read access to the object is denied;
+/// - **OBJECT_NOT_FOUND** (2049, SECTION_OBJECT): \
+/// object not found in container;
+/// - **OBJECT_ALREADY_REMOVED** (2052, SECTION_OBJECT): \
+/// the requested object has been marked as deleted;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        Get: *const fn(userdata: *UserDataType, request: GetRequest, writer_queue: *std.Io.Queue(GetResponse)) ErrorSet!void,
+/// Put the object into container. Request uses gRPC stream. First message
+/// SHOULD be of PutHeader type. `ContainerID` and `OwnerID` of an object
+/// SHOULD be set. Session token SHOULD be obtained before `PUT` operation (see
+/// session package). Chunk messages are considered by server as a part of an
+/// object payload. All messages, except first one, SHOULD be payload chunks.
+/// Chunk messages SHOULD be sent in the direct order of fragmentation.
+/// 
+/// Extended headers can change `Put` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation. DEPRECATED: header ignored by servers.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// object has been successfully saved in the container;
+/// - **INCOMPLETE** (1, SECTION_SUCCESS): \
+/// object was put to some nodes, but the number of replicas is not sufficient
+/// to satisfy placement policy;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// write access to the container is denied;
+/// - **LOCKED** (2050, SECTION_OBJECT): \
+/// placement of an object of type TOMBSTONE that includes at least one locked
+/// object is prohibited;
+/// - **LOCK_NON_REGULAR_OBJECT** (2051, SECTION_OBJECT): \
+/// placement of an object of type LOCK that includes at least one object of
+/// type other than REGULAR is prohibited;
+/// - **QUOTA_EXCEEDED** (2054, SECTION_OBJECT): \
+/// size quota set by user was exceeded;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object storage container not found;
+/// - **TOKEN_NOT_FOUND** (4096, SECTION_SESSION): \
+/// (for trusted object preparation) session private key does not exist or has
+/// been deleted;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        Put: *const fn(userdata: *UserDataType, reader_queue: *std.Io.Queue(PutRequest)) ErrorSet!PutResponse,
+/// Delete the object from a container. There is no immediate removal
+/// guarantee. Object will be marked for removal and deleted eventually.
+/// Notice that some types of objects (see ObjectType) can not be removed,
+/// currently it's Tombstone and Lock.
+/// 
+/// Extended headers can change `Delete` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation. DEPRECATED: header ignored by servers.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// object has been successfully marked to be removed from the container;
+/// - **INCOMPLETE** (1, SECTION_SUCCESS): \
+/// some nodes have accepted the deletion mark, but some may still store
+/// the object;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// delete access to the object is denied;
+/// - **LOCKED** (2050, SECTION_OBJECT): \
+/// deleting a locked object is prohibited;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        Delete: *const fn(userdata: *UserDataType, request: DeleteRequest) ErrorSet!DeleteResponse,
+/// Returns the object Headers without data payload. By default full header is
+/// returned. If `main_only` request field is set, the short header with only
+/// the very minimal information will be returned instead.
+/// 
+/// Extended headers can change `Head` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// object header has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// access to operation HEAD of the object is denied;
+/// - **OBJECT_NOT_FOUND** (2049, SECTION_OBJECT): \
+/// object not found in container;
+/// - **OBJECT_ALREADY_REMOVED** (2052, SECTION_OBJECT): \
+/// the requested object has been marked as deleted;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        Head: *const fn(userdata: *UserDataType, request: HeadRequest) ErrorSet!HeadResponse,
+/// Search objects in container. Search query allows to match by Object
+/// Header's filed values. Please see the corresponding NeoFS Technical
+/// Specification section for more details.
+/// 
+/// DEPRECATED: please use SearchV2.
+/// 
+/// Extended headers can change `Search` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// objects have been successfully selected;
+/// - **INCOMPLETE** (1, SECTION_SUCCESS): \
+/// some nodes were unable to process the request, so the result may
+/// not contain all data;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// access to operation SEARCH of the object is denied;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// search container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        Search: *const fn(userdata: *UserDataType, request: SearchRequest, writer_queue: *std.Io.Queue(SearchResponse)) ErrorSet!void,
+/// Search for objects in a container. Similar to Search, but:
+/// * sorted
+/// * limited in amount of returned data
+/// * single message
+/// * allows for additional header fields to be returned
+/// 
+/// Result is ordered by the 1st requested attribute (if any) and object ID.
+        SearchV2: *const fn(userdata: *UserDataType, request: SearchV2Request) ErrorSet!SearchV2Response,
+/// Get byte range of data payload. Range is set as an (offset, length) tuple.
+/// Like in `Get` method, the response uses gRPC stream. Requested range can be
+/// restored by concatenation of all received payload chunks keeping the receiving
+/// order.
+/// 
+/// DEPRECATED: use `Get` with `range` (and `payload_only` if needed) parameter.
+/// 
+/// Extended headers can change `GetRange` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation. DEPRECATED: header ignored by servers.
+/// * __NEOFS__NETMAP_LOOKUP_DEPTH \
+/// Will try older versions of Network Map to find an object until the depth
+/// limit is reached. DEPRECATED: header ignored by servers.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// data range of the object payload has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// access to operation RANGE of the object is denied;
+/// - **OBJECT_NOT_FOUND** (2049, SECTION_OBJECT): \
+/// object not found in container;
+/// - **OBJECT_ALREADY_REMOVED** (2052, SECTION_OBJECT): \
+/// the requested object has been marked as deleted.
+/// - **OUT_OF_RANGE** (2053, SECTION_OBJECT): \
+/// the requested range is out of bounds;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        GetRange: *const fn(userdata: *UserDataType, request: GetRangeRequest, writer_queue: *std.Io.Queue(GetRangeResponse)) ErrorSet!void,
+/// Returns homomorphic or regular hash of object's payload range after
+/// applying XOR operation with the provided `salt`. Ranges are set of (offset,
+/// length) tuples. Hashes order in response corresponds to the ranges order in
+/// the request. Note that hash is calculated for XORed data.
+/// 
+/// DEPRECATED: no valid use cases.
+/// 
+/// Extended headers can change `GetRangeHash` behaviour:
+/// * __NEOFS__NETMAP_EPOCH \
+/// Will use the requsted version of Network Map for object placement
+/// calculation. DEPRECATED: header ignored by servers.
+/// * __NEOFS__NETMAP_LOOKUP_DEPTH \
+/// Will try older versions of Network Map to find an object until the depth
+/// limit is reached. DEPRECATED: header ignored by servers.
+/// 
+/// Please refer to detailed `XHeader` description.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// data range of the object payload has been successfully hashed;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// access to operation RANGEHASH of the object is denied;
+/// - **OBJECT_NOT_FOUND** (2049, SECTION_OBJECT): \
+/// object not found in container;
+/// - **OUT_OF_RANGE** (2053, SECTION_OBJECT): \
+/// the requested range is out of bounds;
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// object container not found;
+/// - **TOKEN_EXPIRED** (4097, SECTION_SESSION): \
+/// provided session token has expired.
+        GetRangeHash: *const fn(userdata: *UserDataType, request: GetRangeHashRequest) ErrorSet!GetRangeHashResponse,
+/// Save replica of the object on the NeoFS storage node. Both client and
+/// server must authenticate NeoFS storage nodes matching storage policy of
+/// the container referenced by the replicated object. Thus, this operation is
+/// purely system: regular users should not pay attention to it but use Put.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// the object has been successfully replicated;
+/// - **INTERNAL_SERVER_ERROR** (1024, SECTION_FAILURE_COMMON): \
+/// internal server error described in the text message;
+/// - **ACCESS_DENIED** (2048, SECTION_OBJECT): \
+/// the client does not authenticate any NeoFS storage node matching storage
+/// policy of the container referenced by the replicated object
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// the container to which the replicated object is associated was not found.
+        Replicate: *const fn(userdata: *UserDataType, request: ReplicateRequest) ErrorSet!ReplicateResponse,
+    };
+}

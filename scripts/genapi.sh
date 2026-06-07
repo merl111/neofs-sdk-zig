@@ -13,7 +13,10 @@ if [[ ! -d "${PROTO_ROOT}" ]]; then
 fi
 
 if [[ -z "${PROTOBUF_SRC_DIR}" ]]; then
-  for cache_dir in "${ROOT_DIR}/.zig-cache/p" "${HOME}/.cache/zig/p"; do
+  for cache_dir in \
+    "${ROOT_DIR}/zig-pkg" \
+    "${ROOT_DIR}/.zig-cache/p" \
+    "${HOME}/.cache/zig/p"; do
     if [[ -d "${cache_dir}" ]]; then
       PROTOBUF_SRC_DIR="$(ls -dt "${cache_dir}"/protobuf-* 2>/dev/null | head -n1 || true)"
       if [[ -n "${PROTOBUF_SRC_DIR}" && -d "${PROTOBUF_SRC_DIR}" ]]; then

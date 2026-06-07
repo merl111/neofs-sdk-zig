@@ -368,3 +368,23 @@ pub const Body = struct {
     }
 
 };
+
+/// Accounting service provides methods for interaction with FS chain via
+/// other NeoFS nodes to get information about the account balance. Deposit and
+/// Withdraw operations can't be implemented here, as they require Mainnet NeoFS
+/// smart contract invocation. Transfer operations between internal NeoFS
+/// accounts are possible if both use the same token type.
+pub fn AccountingService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.accounting";
+        pub const service_name = "AccountingService";
+
+/// Returns the amount of funds in GAS token for the requested NeoFS account.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// balance has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        Balance: *const fn(userdata: *UserDataType, request: BalanceRequest) ErrorSet!BalanceResponse,
+    };
+}

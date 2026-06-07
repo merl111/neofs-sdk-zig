@@ -70,8 +70,8 @@ pub const HeaderType = enum(i32) {
 pub const EACLRecord = struct {
     operation: Operation = @enumFromInt(0),
     action: Action = @enumFromInt(0),
-    filters: std.ArrayListUnmanaged(EACLRecord.Filter) = .empty,
-    targets: std.ArrayListUnmanaged(EACLRecord.Target) = .empty,
+    filters: std.ArrayList(EACLRecord.Filter) = .empty,
+    targets: std.ArrayList(EACLRecord.Target) = .empty,
 
     pub const _desc_table = .{
         .operation = fd(1, .@"enum"),
@@ -195,7 +195,7 @@ pub const Filter = struct {
 /// keys to match.
 pub const Target = struct {
     role: Role = @enumFromInt(0),
-    keys: std.ArrayListUnmanaged([]const u8) = .empty,
+    keys: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .role = fd(1, .@"enum"),
@@ -329,7 +329,7 @@ pub const Target = struct {
 pub const EACLTable = struct {
     version: ?neo_fs_v2_refs.Version = null,
     container_id: ?neo_fs_v2_refs.ContainerID = null,
-    records: std.ArrayListUnmanaged(EACLRecord) = .empty,
+    records: std.ArrayList(EACLRecord) = .empty,
 
     pub const _desc_table = .{
         .version = fd(1, .submessage),

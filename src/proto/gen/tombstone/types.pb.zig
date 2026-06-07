@@ -17,7 +17,7 @@ const neo_fs_v2_refs = @import("../refs/types.pb.zig");
 pub const Tombstone = struct {
     expiration_epoch: u64 = 0,
     split_id: []const u8 = &.{},
-    members: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    members: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
 
     pub const _desc_table = .{
         .expiration_epoch = fd(1, .{ .scalar = .uint64 }),

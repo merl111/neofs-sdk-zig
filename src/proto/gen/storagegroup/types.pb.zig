@@ -22,7 +22,7 @@ pub const StorageGroup = struct {
     validation_data_size: u64 = 0,
     validation_hash: ?neo_fs_v2_refs.Checksum = null,
     expiration_epoch: u64 = 0,
-    members: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    members: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
 
     pub const _desc_table = .{
         .validation_data_size = fd(1, .{ .scalar = .uint64 }),

@@ -18,7 +18,7 @@ const neo_fs_v2_refs = @import("../refs/types.pb.zig");
 /// Deleting a container containing lock/locked objects results in their removal
 /// too, regardless of their expiration epochs.
 pub const Lock = struct {
-    members: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    members: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
 
     pub const _desc_table = .{
         .members = fd(1, .{ .repeated = .submessage}),

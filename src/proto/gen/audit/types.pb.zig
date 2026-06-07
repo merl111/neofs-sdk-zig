@@ -19,13 +19,13 @@ pub const DataAuditResult = struct {
     complete: bool = false,
     requests: u32 = 0,
     retries: u32 = 0,
-    pass_sg: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
-    fail_sg: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    pass_sg: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
+    fail_sg: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
     hit: u32 = 0,
     miss: u32 = 0,
     fail: u32 = 0,
-    pass_nodes: std.ArrayListUnmanaged([]const u8) = .empty,
-    fail_nodes: std.ArrayListUnmanaged([]const u8) = .empty,
+    pass_nodes: std.ArrayList([]const u8) = .empty,
+    fail_nodes: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .version = fd(1, .submessage),

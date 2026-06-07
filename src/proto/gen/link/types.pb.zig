@@ -16,7 +16,7 @@ const neo_fs_v2_refs = @import("../refs/types.pb.zig");
 /// at the first place in the corresponding link object. Sizes MUST NOT be omitted
 /// and MUST be a real object payload size in bytes.
 pub const Link = struct {
-    children: std.ArrayListUnmanaged(Link.MeasuredObject) = .empty,
+    children: std.ArrayList(Link.MeasuredObject) = .empty,
 
     pub const _desc_table = .{
         .children = fd(1, .{ .repeated = .submessage}),

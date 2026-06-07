@@ -59,7 +59,7 @@ pub const Verb = enum(i32) {
 /// Carries objects involved in the object session.
 pub const Target = struct {
     container: ?neo_fs_v2_refs.ContainerID = null,
-    objects: std.ArrayListUnmanaged(neo_fs_v2_refs.ObjectID) = .empty,
+    objects: std.ArrayList(neo_fs_v2_refs.ObjectID) = .empty,
 
     pub const _desc_table = .{
         .container = fd(1, .submessage),
@@ -595,7 +595,7 @@ pub const RequestMetaHeader = struct {
     version: ?neo_fs_v2_refs.Version = null,
     epoch: u64 = 0,
     ttl: u32 = 0,
-    x_headers: std.ArrayListUnmanaged(XHeader) = .empty,
+    x_headers: std.ArrayList(XHeader) = .empty,
     session_token: ?SessionToken = null,
     session_token_v2: ?SessionTokenV2 = null,
     bearer_token: ?neo_fs_v2_acl.BearerToken = null,
@@ -679,7 +679,7 @@ pub const ResponseMetaHeader = struct {
     version: ?neo_fs_v2_refs.Version = null,
     epoch: u64 = 0,
     ttl: u32 = 0,
-    x_headers: std.ArrayListUnmanaged(XHeader) = .empty,
+    x_headers: std.ArrayList(XHeader) = .empty,
     origin: ?*ResponseMetaHeader = null,
     status: ?neo_fs_v2_status.Status = null,
 
@@ -1059,11 +1059,11 @@ pub const TokenLifetime = struct {
 /// SessionContextV2 carries unified context for both ObjectService and ContainerService requests.
 pub const SessionContextV2 = struct {
     container: ?neo_fs_v2_refs.ContainerID = null,
-    verbs: std.ArrayListUnmanaged(Verb) = .empty,
+    verbs: std.ArrayList(Verb) = .empty,
 
     pub const _desc_table = .{
         .container = fd(1, .submessage),
-        .verbs = fd(2, .{ .repeated = .@"enum"}),
+        .verbs = fd(2, .{ .packed_repeated = .@"enum"}),
     };
 
     /// Encodes the message to the writer
@@ -1143,9 +1143,9 @@ pub const Body = struct {
     version: u32 = 0,
     appdata: []const u8 = &.{},
     issuer: ?neo_fs_v2_refs.OwnerID = null,
-    subjects: std.ArrayListUnmanaged(Target) = .empty,
+    subjects: std.ArrayList(Target) = .empty,
     lifetime: ?TokenLifetime = null,
-    contexts: std.ArrayListUnmanaged(SessionContextV2) = .empty,
+    contexts: std.ArrayList(SessionContextV2) = .empty,
     final: bool = false,
 
     pub const _desc_table = .{
@@ -1561,3 +1561,22 @@ pub const Body = struct {
     }
 
 };
+
+/// `SessionService` allows to establish a temporary trust relationship between
+/// two peer nodes and generate a `SessionToken` as the proof of trust to be
+/// attached in requests for further verification. Please see corresponding
+/// section of NeoFS Technical Specification for details.
+pub fn SessionService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.session";
+        pub const service_name = "SessionService";
+
+/// Open a new session between two peers.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// session has been successfully opened;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        Create: *const fn(userdata: *UserDataType, request: CreateRequest) ErrorSet!CreateResponse,
+    };
+}

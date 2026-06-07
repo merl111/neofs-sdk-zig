@@ -42,7 +42,7 @@ pub const Filter = struct {
     key: []const u8 = &.{},
     op: Operation = @enumFromInt(0),
     value: []const u8 = &.{},
-    filters: std.ArrayListUnmanaged(Filter) = .empty,
+    filters: std.ArrayList(Filter) = .empty,
 
     pub const _desc_table = .{
         .name = fd(1, .{ .scalar = .string }),
@@ -265,12 +265,12 @@ pub const Replica = struct {
 /// container's objects. The format is simple enough to transpile from different
 /// storage policy definition languages.
 pub const PlacementPolicy = struct {
-    replicas: std.ArrayListUnmanaged(Replica) = .empty,
+    replicas: std.ArrayList(Replica) = .empty,
     container_backup_factor: u32 = 0,
-    selectors: std.ArrayListUnmanaged(Selector) = .empty,
-    filters: std.ArrayListUnmanaged(Filter) = .empty,
+    selectors: std.ArrayList(Selector) = .empty,
+    filters: std.ArrayList(Filter) = .empty,
     subnet_id: ?neo_fs_v2_refs.SubnetID = null,
-    ec_rules: std.ArrayListUnmanaged(PlacementPolicy.ECRule) = .empty,
+    ec_rules: std.ArrayList(PlacementPolicy.ECRule) = .empty,
     initial: ?PlacementPolicy.Initial = null,
 
     pub const _desc_table = .{
@@ -412,7 +412,7 @@ pub const ECRule = struct {
 /// Initial policy must not repeat the main one. In particular, policy with
 /// `replica_limits` equal to main ones only is invalid.
 pub const Initial = struct {
-    replica_limits: std.ArrayListUnmanaged(u32) = .empty,
+    replica_limits: std.ArrayList(u32) = .empty,
     max_replicas: u32 = 0,
     prefer_local: bool = false,
 
@@ -545,8 +545,8 @@ pub const Initial = struct {
 /// NeoFS node description
 pub const NodeInfo = struct {
     public_key: []const u8 = &.{},
-    addresses: std.ArrayListUnmanaged([]const u8) = .empty,
-    attributes: std.ArrayListUnmanaged(NodeInfo.Attribute) = .empty,
+    addresses: std.ArrayList([]const u8) = .empty,
+    attributes: std.ArrayList(NodeInfo.Attribute) = .empty,
     state: NodeInfo.State = @enumFromInt(0),
 
     pub const _desc_table = .{
@@ -654,7 +654,7 @@ pub const State = enum(i32) {
 pub const Attribute = struct {
     key: []const u8 = &.{},
     value: []const u8 = &.{},
-    parents: std.ArrayListUnmanaged([]const u8) = .empty,
+    parents: std.ArrayList([]const u8) = .empty,
 
     pub const _desc_table = .{
         .key = fd(1, .{ .scalar = .string }),
@@ -785,7 +785,7 @@ pub const Attribute = struct {
 /// Network map structure
 pub const Netmap = struct {
     epoch: u64 = 0,
-    nodes: std.ArrayListUnmanaged(NodeInfo) = .empty,
+    nodes: std.ArrayList(NodeInfo) = .empty,
 
     pub const _desc_table = .{
         .epoch = fd(1, .{ .scalar = .uint64 }),
@@ -854,7 +854,7 @@ pub const Netmap = struct {
 
 /// NeoFS network configuration
 pub const NetworkConfig = struct {
-    parameters: std.ArrayListUnmanaged(NetworkConfig.Parameter) = .empty,
+    parameters: std.ArrayList(NetworkConfig.Parameter) = .empty,
 
     pub const _desc_table = .{
         .parameters = fd(1, .{ .repeated = .submessage}),
@@ -1940,3 +1940,40 @@ pub const Body = struct {
     }
 
 };
+
+/// `NetmapService` provides methods to work with `Network Map` and the information
+/// required to build it. The resulting `Network Map` is stored in FS chain
+/// `Netmap` smart contract, while related information can be obtained from other
+/// NeoFS nodes.
+pub fn NetmapService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.netmap";
+        pub const service_name = "NetmapService";
+
+/// Get NodeInfo structure from the particular node directly.
+/// Node information can be taken from `Netmap` smart contract. In some cases, though,
+/// one may want to get recent information directly or to talk to the node not yet
+/// present in the `Network Map` to find out what API version can be used for
+/// further communication. This can be also used to check if a node is up and running.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// information about the server has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        LocalNodeInfo: *const fn(userdata: *UserDataType, request: LocalNodeInfoRequest) ErrorSet!LocalNodeInfoResponse,
+/// Read recent information about the NeoFS network.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// information about the current network state has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        NetworkInfo: *const fn(userdata: *UserDataType, request: NetworkInfoRequest) ErrorSet!NetworkInfoResponse,
+/// Returns network map snapshot of the current NeoFS epoch.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS):
+/// information about the current network map has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        NetmapSnapshot: *const fn(userdata: *UserDataType, request: NetmapSnapshotRequest) ErrorSet!NetmapSnapshotResponse,
+    };
+}

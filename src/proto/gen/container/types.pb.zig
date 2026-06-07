@@ -24,7 +24,7 @@ pub const Container = struct {
     owner_id: ?neo_fs_v2_refs.OwnerID = null,
     nonce: []const u8 = &.{},
     basic_acl: u32 = 0,
-    attributes: std.ArrayListUnmanaged(Container.Attribute) = .empty,
+    attributes: std.ArrayList(Container.Attribute) = .empty,
     placement_policy: ?neo_fs_v2_netmap.PlacementPolicy = null,
 
     pub const _desc_table = .{
@@ -1254,7 +1254,7 @@ pub const ListResponse = struct {
 
 /// List containers response body.
 pub const Body = struct {
-    container_ids: std.ArrayListUnmanaged(neo_fs_v2_refs.ContainerID) = .empty,
+    container_ids: std.ArrayList(neo_fs_v2_refs.ContainerID) = .empty,
 
     pub const _desc_table = .{
         .container_ids = fd(1, .{ .repeated = .submessage}),
@@ -1966,7 +1966,7 @@ pub const AnnounceUsedSpaceRequest = struct {
 
 /// Container used space announcement body.
 pub const Body = struct {
-    announcements: std.ArrayListUnmanaged(AnnounceUsedSpaceRequest.Body.Announcement) = .empty,
+    announcements: std.ArrayList(AnnounceUsedSpaceRequest.Body.Announcement) = .empty,
 
     pub const _desc_table = .{
         .announcements = fd(1, .{ .repeated = .submessage}),
@@ -2911,3 +2911,118 @@ pub const RemoveAttributeResponse = struct {
     }
 
 };
+
+/// `ContainerService` provides API to interact with `Container` smart contract
+/// in FS chain via other NeoFS nodes. All of those actions can be done
+/// equivalently by directly issuing transactions and RPC calls to FS chain
+/// nodes.
+pub fn ContainerService(comptime UserDataType: type, comptime ErrorSet: type) type {
+    return struct {
+        pub const package = "neo.fs.v2.container";
+        pub const service_name = "ContainerService";
+
+/// Sends transaction calling contract method to create container, and waits
+/// for the transaction to be executed. Deadline is determined by the
+/// transport protocol (e.g. `grpc-timeout` header). If the deadline is not
+/// set, server waits 15s after submitting the transaction.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container successfully created;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_AWAIT_TIMEOUT** (3075, SECTION_CONTAINER): \
+/// transaction was sent but not executed within the deadline.
+        Put: *const fn(userdata: *UserDataType, request: PutRequest) ErrorSet!PutResponse,
+/// Sends transaction calling contract method to delete container, and waits
+/// for the transaction to be executed. Deadline is determined by the
+/// transport protocol (e.g. `grpc-timeout` header). If the deadline is not
+/// set, server waits 15s after submitting the transaction.
+/// NOTE: a container deletion leads to the removal of every object in that
+/// container, regardless of any restrictions on the object removal (e.g. lock/locked
+/// object would be also removed).
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container successfully removed;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_LOCKED** (3074, SECTION_CONTAINER): \
+/// deleting a locked container is prohibited;
+/// - **CONTAINER_AWAIT_TIMEOUT** (3075, SECTION_CONTAINER): \
+/// transaction was sent but not executed within the deadline.
+        Delete: *const fn(userdata: *UserDataType, request: DeleteRequest) ErrorSet!DeleteResponse,
+/// Returns container structure from `Container` smart contract storage.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// requested container not found.
+        Get: *const fn(userdata: *UserDataType, request: GetRequest) ErrorSet!GetResponse,
+/// Returns all owner's containers from 'Container` smart contract' storage.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container list has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON).
+        List: *const fn(userdata: *UserDataType, request: ListRequest) ErrorSet!ListResponse,
+/// Sends transaction calling contract method to set container's extended ACL,
+/// and waits for the transaction to be executed. Deadline is determined by
+/// the transport protocol (e.g. `grpc-timeout` header). If the deadline is
+/// not set, server waits 15s after submitting the transaction.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container eACL successfully set;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_AWAIT_TIMEOUT** (3075, SECTION_CONTAINER): \
+/// transaction was sent but not executed within the deadline.
+        SetExtendedACL: *const fn(userdata: *UserDataType, request: SetExtendedACLRequest) ErrorSet!SetExtendedACLResponse,
+/// Returns Extended ACL table and signature from `Container` smart contract
+/// storage.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// container eACL has been successfully read;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_NOT_FOUND** (3072, SECTION_CONTAINER): \
+/// container not found;
+/// - **EACL_NOT_FOUND** (3073, SECTION_CONTAINER): \
+/// eACL table not found.
+        GetExtendedACL: *const fn(userdata: *UserDataType, request: GetExtendedACLRequest) ErrorSet!GetExtendedACLResponse,
+/// Announces the space values used by the container for P2P synchronization.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// estimation of used space has been successfully announced;
+/// - Common failures (SECTION_FAILURE_COMMON).
+/// 
+/// DEPRECATED: every storage node must send storage load directly to `container`
+/// contract.
+        AnnounceUsedSpace: *const fn(userdata: *UserDataType, request: AnnounceUsedSpaceRequest) ErrorSet!AnnounceUsedSpaceResponse,
+/// Sends transaction calling contract method to set container attribute, and
+/// waits for the transaction to be executed. Deadline is determined by the
+/// transport protocol (e.g. `grpc-timeout` header). If the deadline is not
+/// set, server waits 15s after submitting the transaction.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// attribute successfully set;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_AWAIT_TIMEOUT** (3075, SECTION_CONTAINER): \
+/// transaction was sent but not executed within the deadline.
+        SetAttribute: *const fn(userdata: *UserDataType, request: SetAttributeRequest) ErrorSet!SetAttributeResponse,
+/// Sends transaction calling contract method to remove container attribute,
+/// and waits for the transaction to be executed. Deadline is determined by
+/// the transport protocol (e.g. `grpc-timeout` header). If the deadline is
+/// not set, server waits 15s after submitting the transaction.
+/// 
+/// Statuses:
+/// - **OK** (0, SECTION_SUCCESS): \
+/// attribute successfully removed;
+/// - Common failures (SECTION_FAILURE_COMMON);
+/// - **CONTAINER_AWAIT_TIMEOUT** (3075, SECTION_CONTAINER): \
+/// transaction was sent but not executed within the deadline.
+        RemoveAttribute: *const fn(userdata: *UserDataType, request: RemoveAttributeRequest) ErrorSet!RemoveAttributeResponse,
+    };
+}
