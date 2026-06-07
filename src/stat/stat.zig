@@ -50,7 +50,7 @@ pub const Monitor = struct {
     }
 
     pub fn snapshot(self: *Monitor, allocator: std.mem.Allocator) ![]SnapshotEntry {
-        var out: std.ArrayList(SnapshotEntry) = .{};
+        var out: std.ArrayList(SnapshotEntry) = .empty;
         var it = self.totals.iterator();
         while (it.next()) |entry| {
             try out.append(allocator, .{
@@ -64,9 +64,7 @@ pub const Monitor = struct {
 };
 
 test "monitor accumulates totals and failures" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var mon = Monitor.init(allocator);
     defer mon.deinit();

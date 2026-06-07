@@ -32,9 +32,7 @@ pub fn newFromData(allocator: std.mem.Allocator, typ: Type, data: []const u8) !C
 }
 
 test "checksum sha256" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const c = try newFromData(allocator, .sha256, "abc");
     defer allocator.free(c.value);
     try std.testing.expectEqual(Type.sha256, c.typ);

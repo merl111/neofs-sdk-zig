@@ -2,9 +2,9 @@ const std = @import("std");
 const hrw = @import("hrw/root.zig");
 
 test "hrw reference vectors" {
-    const allocator = std.heap.page_allocator;
+    const allocator = std.testing.allocator;
 
-    const data = try std.fs.cwd().readFileAlloc(allocator, "test/vectors/hrw/reference.json", 1 << 20);
+    const data = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "test/vectors/hrw/reference.json", allocator, std.Io.Limit.limited(1 << 20));
     defer allocator.free(data);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, data, .{});
@@ -37,5 +37,5 @@ test "hrw reference vectors" {
 }
 
 test "tzhash reference vector file present" {
-    try std.fs.cwd().access("test/vectors/tzhash/reference.json", .{});
+    try std.Io.Dir.cwd().access(std.testing.io, "test/vectors/tzhash/reference.json", .{});
 }

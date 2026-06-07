@@ -100,7 +100,7 @@ fn freeSignature(allocator: std.mem.Allocator, s: *sig.Signature) void {
 }
 
 fn marshalVerificationHeader(allocator: std.mem.Allocator, vh: *const RequestVerificationHeader) ![]u8 {
-    var out = std.ArrayList(u8){};
+    var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
 
     if (vh.body_signature) |b| {
@@ -117,7 +117,7 @@ fn marshalVerificationHeader(allocator: std.mem.Allocator, vh: *const RequestVer
 }
 
 fn appendSignatureField(allocator: std.mem.Allocator, out: *std.ArrayList(u8), field_num: u32, s: sig.Signature) !void {
-    var msg = std.ArrayList(u8){};
+    var msg = std.ArrayList(u8).empty;
     defer msg.deinit(allocator);
     try appendBytesField(allocator, &msg, 1, s.key);
     try appendBytesField(allocator, &msg, 2, s.value);
@@ -145,9 +145,7 @@ fn appendVarintField(allocator: std.mem.Allocator, out: *std.ArrayList(u8), fiel
 }
 
 test "request signing chain enforces origin/body rules" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var local = signer_mod.LocalSigner{ .secret = "k" };
     const first = try signRequestWithBuffer(allocator, local.asSigner(), .{
@@ -172,9 +170,7 @@ test "request signing chain enforces origin/body rules" {
 }
 
 test "request signing fails on bad meta chain length" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     var local = signer_mod.LocalSigner{ .secret = "k" };
     const first = try signRequestWithBuffer(allocator, local.asSigner(), .{
         .body = "body",

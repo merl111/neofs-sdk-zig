@@ -2,9 +2,7 @@ const std = @import("std");
 const slicer = @import("slicer.zig");
 
 test "slice payload into chunks with checksums" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const payload = "abcdefghij";
     const chunks = try slicer.slicePayload(allocator, payload, 4);

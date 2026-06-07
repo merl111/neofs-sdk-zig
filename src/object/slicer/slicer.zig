@@ -14,7 +14,7 @@ test {
 
 pub fn slicePayload(allocator: std.mem.Allocator, payload: []const u8, chunk_size: usize) ![]Chunk {
     if (chunk_size == 0) return error.InvalidChunkSize;
-    var list: std.ArrayList(Chunk) = .{};
+    var list: std.ArrayList(Chunk) = .empty;
     errdefer list.deinit(allocator);
 
     var offset: usize = 0;
@@ -30,7 +30,7 @@ pub fn slicePayload(allocator: std.mem.Allocator, payload: []const u8, chunk_siz
 }
 
 pub fn asObjects(allocator: std.mem.Allocator, chunks: []const Chunk) ![]object.Object {
-    var list: std.ArrayList(object.Object) = .{};
+    var list: std.ArrayList(object.Object) = .empty;
     errdefer list.deinit(allocator);
     for (chunks) |chunk| {
         try list.append(allocator, .{ .payload = chunk.payload, .payload_checksum = chunk.checksum });

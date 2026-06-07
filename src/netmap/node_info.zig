@@ -11,7 +11,7 @@ pub const NodeInfo = struct {
     pub fn init(_: std.mem.Allocator) NodeInfo {
         return .{
             .public_key = "",
-            .attributes = .{},
+            .attributes = .empty,
         };
     }
 
@@ -162,7 +162,7 @@ const ReverseMinNorm = struct {
 };
 
 const MeanIQRAgg = struct {
-    arr: std.ArrayListUnmanaged(f64) = .{},
+    arr: std.ArrayListUnmanaged(f64) = .empty,
     k: f64 = 1.5,
 
     fn init(allocator: std.mem.Allocator) MeanIQRAgg {

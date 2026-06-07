@@ -98,7 +98,7 @@ pub const Table = struct {
     pub fn init(allocator: std.mem.Allocator) Table {
         return .{
             .allocator = allocator,
-            .records = .{},
+            .records = .empty,
         };
     }
 

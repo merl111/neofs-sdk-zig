@@ -8,17 +8,17 @@ const sample_policy =
     \\SELECT 2 IN SAME Location FROM * AS X
 ;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
     var parsed = try sdk.netmap.policy.decodeString(allocator, sample_policy);
     defer sdk.netmap.policy.deinitPolicy(&parsed, allocator);
     try sdk.netmap.policy.verifyPolicy(allocator, parsed);
 
     const analysis = sdk.container_placement.analyzeParsed(parsed);
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout = std.Io.File.stdout().writer(io, &stdout_buf);
     try stdout.writeAll("Policy OK:\n");
     try sdk.container_placement.printPolicyAnalysis(stdout, analysis);
 

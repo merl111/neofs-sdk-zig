@@ -12,9 +12,7 @@ fn toProtoMatch(m: search.Match) object_pb.MatchType {
 }
 
 test "search filter encoding preserves key value and match" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const sf = object_pb.SearchFilter{
         .match_type = toProtoMatch(.eq),
@@ -38,9 +36,7 @@ test "search filter encoding preserves key value and match" {
 }
 
 test "search filters list accepts multiple matchers" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var filters = search.Filters.init(allocator);
     defer filters.deinit();

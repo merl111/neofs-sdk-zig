@@ -9,9 +9,7 @@ fn encodeMessage(comptime T: type, allocator: std.mem.Allocator, msg: T) ![]u8 {
 }
 
 test "golden object get body bytes match neofs-sdk-go fixture" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const body = object_pb.GetRequest.Body{
         .address = .{

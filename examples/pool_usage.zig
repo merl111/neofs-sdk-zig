@@ -1,11 +1,10 @@
 const std = @import("std");
 const sdk = @import("neofs_sdk");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    var p = sdk.pool.Pool.init(gpa.allocator());
+    var p = sdk.pool.Pool.init(allocator, init.io);
     defer p.deinit();
 
     try p.addNode(.{ .endpoint = "grpc://node-a:8080" });

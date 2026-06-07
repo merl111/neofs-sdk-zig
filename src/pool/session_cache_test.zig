@@ -1,12 +1,11 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 const cache_mod = @import("session_cache.zig");
 const session = @import("../session/token.zig");
 const session_v2 = @import("../session/v2/token.zig");
 
 test "session cache v1 get put and expiry" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = false }){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var cache = cache_mod.SessionCache.init(allocator, 4);
     defer cache.deinit();
@@ -25,14 +24,12 @@ test "session cache v1 get put and expiry" {
 }
 
 test "session cache v2 expires by unix time" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var cache = cache_mod.SessionCache.init(allocator, 4);
     defer cache.deinit();
 
-    const now: u64 = @intCast(std.time.timestamp());
+    const now: u64 = @intCast(clock.timestamp());
     const tok = session_v2.Token{
         .verb = .object_put,
         .issuer = "issuer",
@@ -49,9 +46,7 @@ test "session cache v2 expires by unix time" {
 }
 
 test "session cache delete by prefix" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var cache = cache_mod.SessionCache.init(allocator, 8);
     defer cache.deinit();

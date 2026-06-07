@@ -33,11 +33,11 @@ pub const VectorCase = struct {
 };
 
 pub fn loadNetmapVector(allocator: std.mem.Allocator, path: []const u8) !VectorCase {
-    const data = try std.fs.cwd().readFileAlloc(allocator, path, 16 << 20);
-    errdefer allocator.free(data);
+    const data = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, allocator, std.Io.Limit.limited(16 << 20));
+    defer allocator.free(data);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, data, .{ .ignore_unknown_fields = true });
-    errdefer parsed.deinit();
+    defer parsed.deinit();
 
     const root = parsed.value.object;
     const name = root.get("name") orelse return error.InvalidVector;
@@ -61,17 +61,17 @@ pub fn loadNetmapVector(allocator: std.mem.Allocator, path: []const u8) !VectorC
                 const key_v = ao.get("key") orelse return error.InvalidVector;
                 const val_v = ao.get("value") orelse return error.InvalidVector;
                 try attrs_list.append(allocator, .{
-                    .key = key_v.string,
-                    .value = val_v.string,
+                    .key = try allocator.dupe(u8, key_v.string),
+                    .value = try allocator.dupe(u8, val_v.string),
                 });
             }
         }
         const attrs_slice = try attrs_list.toOwnedSlice(allocator);
         try nodes_list.append(allocator, .{
-            .publicKey = pk_str,
+            .publicKey = try allocator.dupe(u8, pk_str),
             .addresses = &.{},
             .attributes = attrs_slice,
-            .state = if (obj.get("state")) |s| s.string else "UNSPECIFIED",
+            .state = if (obj.get("state")) |s| try allocator.dupe(u8, s.string) else try allocator.dupe(u8, "UNSPECIFIED"),
         });
     }
 
@@ -176,7 +176,15 @@ fn parsePivot(allocator: std.mem.Allocator, val: ?std.json.Value) ![32]u8 {
 
 pub fn freeVectorCase(allocator: std.mem.Allocator, vc: *VectorCase) void {
     allocator.free(vc.name);
-    for (vc.nodes) |*n| allocator.free(n.attributes);
+    for (vc.nodes) |*n| {
+        allocator.free(n.publicKey);
+        allocator.free(n.state);
+        for (n.attributes) |a| {
+            allocator.free(a.key);
+            allocator.free(a.value);
+        }
+        allocator.free(n.attributes);
+    }
     allocator.free(vc.nodes);
     var it = vc.tests.iterator();
     while (it.next()) |e| {

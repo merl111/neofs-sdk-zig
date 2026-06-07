@@ -23,7 +23,7 @@ pub const Filters = struct {
     pub fn init(allocator: std.mem.Allocator) Filters {
         return .{
             .allocator = allocator,
-            .list = .{},
+            .list = .empty,
         };
     }
 

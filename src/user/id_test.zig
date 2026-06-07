@@ -2,9 +2,7 @@ const std = @import("std");
 const id = @import("id.zig");
 
 test "user id base58 round-trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var pubkey: [33]u8 = undefined;
     @memset(&pubkey, 0x02);

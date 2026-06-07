@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 const client_mod = @import("../client/client.zig");
 const object_stream = @import("../client/object_stream.zig");
 const session_mod = @import("../session/token.zig");
@@ -29,6 +30,7 @@ pub const InitParams = struct {
 
 pub const Pool = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     params: InitParams,
     nodes: std.ArrayList(Node),
     inner_pools: std.ArrayList(InnerPool),
@@ -75,10 +77,10 @@ pub const Pool = struct {
             if (!self.monitor.allow()) self.healthy = false;
         }
 
-        fn probeHealth(self: *NodeClient, timeout_ms: u64) bool {
+        fn probeHealth(self: *NodeClient, io: std.Io, timeout_ms: u64) bool {
             const tls = std.mem.startsWith(u8, self.endpoint, "grpcs://");
             self.client.close();
-            self.client.dial(self.endpoint, tls, timeout_ms) catch {
+            self.client.dial(io, self.endpoint, tls, timeout_ms) catch {
                 self.healthy = false;
                 return false;
             };
@@ -91,16 +93,17 @@ pub const Pool = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator) Pool {
-        return initWithParams(allocator, .{});
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) Pool {
+        return initWithParams(allocator, io, .{});
     }
 
-    pub fn initWithParams(allocator: std.mem.Allocator, params: InitParams) Pool {
+    pub fn initWithParams(allocator: std.mem.Allocator, io: std.Io, params: InitParams) Pool {
         return .{
             .allocator = allocator,
+            .io = io,
             .params = params,
-            .nodes = .{},
-            .inner_pools = .{},
+            .nodes = .empty,
+            .inner_pools = .empty,
             .cache = session_cache.SessionCache.init(allocator, 700),
             .node_session_cache = std.StringHashMap(session_mod.Token).init(allocator),
             .active_client = client_mod.Client.init(allocator),
@@ -141,7 +144,7 @@ pub const Pool = struct {
         self.active_client.close();
         self.active_client = client_mod.Client.init(self.allocator);
         const tls = std.mem.startsWith(u8, nc.endpoint, "grpcs://");
-        try self.active_client.dial(nc.endpoint, tls, 10_000);
+        try self.active_client.dial(self.io, nc.endpoint, tls, 10_000);
         self.active_endpoint = try self.allocator.dupe(u8, nc.endpoint);
         if (self.rebalance_thread == null and self.nodes.items.len > 1) {
             self.rebalance_thread = try std.Thread.spawn(.{}, rebalanceLoop, .{self});
@@ -228,9 +231,9 @@ pub const Pool = struct {
             .verb = .object_put,
             .issuer = endpoint,
             .target = "",
-            .iat = @intCast(std.time.timestamp()),
-            .nbf = @intCast(std.time.timestamp()),
-            .exp = @intCast(std.time.timestamp() + @as(i64, @intCast(self.params.session_v2_duration_secs))),
+            .iat = @intCast(clock.timestamp()),
+            .nbf = @intCast(clock.timestamp()),
+            .exp = @intCast(clock.timestamp() + @as(i64, @intCast(self.params.session_v2_duration_secs))),
         };
         try self.cache.putV2(cache_key, tok);
         return session_mod.Token{
@@ -334,11 +337,11 @@ pub const Pool = struct {
 
         for (self.nodes.items, 0..) |node, idx| {
             const gop = try groups.getOrPut(node.priority);
-            if (!gop.found_existing) gop.value_ptr.* = .{};
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
             try gop.value_ptr.append(self.allocator, idx);
         }
 
-        var priorities: std.ArrayList(i32) = .{};
+        var priorities: std.ArrayList(i32) = .empty;
         defer priorities.deinit(self.allocator);
         var git = groups.iterator();
         while (git.next()) |entry| try priorities.append(self.allocator, entry.key_ptr.*);
@@ -346,8 +349,8 @@ pub const Pool = struct {
 
         for (priorities.items) |priority| {
             const indices = groups.get(priority).?;
-            var clients: std.ArrayList(NodeClient) = .{};
-            var weights: std.ArrayList(f64) = .{};
+            var clients: std.ArrayList(NodeClient) = .empty;
+            var weights: std.ArrayList(f64) = .empty;
             defer weights.deinit(self.allocator);
             for (indices.items) |idx| {
                 const node = self.nodes.items[idx];
@@ -388,13 +391,17 @@ pub const Pool = struct {
 
     fn rebalanceLoop(pool: *Pool) void {
         while (!pool.stop_flag.load(.acquire)) {
-            std.Thread.sleep(@intCast(pool.params.rebalance_interval_ns));
+            std.Io.sleep(
+                pool.io,
+                std.Io.Duration.fromNanoseconds(@intCast(pool.params.rebalance_interval_ns)),
+                .awake,
+            ) catch {};
             if (pool.stop_flag.load(.acquire)) break;
             for (pool.inner_pools.items) |*ip| {
-                var weights: std.ArrayList(f64) = .{};
+                var weights: std.ArrayList(f64) = .empty;
                 defer weights.deinit(pool.allocator);
                 for (ip.clients.items) |*nc| {
-                    _ = nc.probeHealth(pool.params.healthcheck_timeout_ms);
+                    _ = nc.probeHealth(pool.io, pool.params.healthcheck_timeout_ms);
                     if (!nc.healthy) nc.weight = 0;
                     weights.append(pool.allocator, nc.weight) catch continue;
                 }
@@ -407,9 +414,7 @@ pub const Pool = struct {
 };
 
 test "pool selects healthy node" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var p = Pool.init(gpa.allocator());
+    var p = Pool.init(std.testing.allocator, std.testing.io);
     defer p.deinit();
     try p.addNode(.{ .endpoint = "mem://n1:8080" });
     try p.addNode(.{ .endpoint = "mem://n2:8080", .weight = 2.0 });
@@ -419,9 +424,7 @@ test "pool selects healthy node" {
 }
 
 test "pool caches container session" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var p = Pool.init(gpa.allocator());
+    var p = Pool.init(std.testing.allocator, std.testing.io);
     defer p.deinit();
     try p.addNode(.{ .endpoint = "mem://n1:8080" });
     try p.dial();
@@ -433,9 +436,7 @@ test "pool caches container session" {
 }
 
 test "pool v2 session mode" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var p = Pool.initWithParams(gpa.allocator(), .{ .use_v2_sessions = true });
+    var p = Pool.initWithParams(std.testing.allocator, std.testing.io, .{ .use_v2_sessions = true });
     defer p.deinit();
     try p.addNode(.{ .endpoint = "mem://n1:8080" });
     try p.dial();
@@ -446,15 +447,13 @@ test "pool v2 session mode" {
 }
 
 test "pool container wrappers use active client" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var p = Pool.init(gpa.allocator());
+    var p = Pool.init(std.testing.allocator, std.testing.io);
     defer p.deinit();
 
     try p.addNode(.{ .endpoint = "mem://n1:8080" });
     try p.dial();
 
-    var cont = try container.Container.init(gpa.allocator(), "owner", "nonce");
+    var cont = try container.Container.init(std.testing.allocator, "owner", "nonce");
     defer cont.deinit();
     const id = try p.containerPut(cont);
     var got = try p.containerGet(id);

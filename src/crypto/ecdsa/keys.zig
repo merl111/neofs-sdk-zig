@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../csprng.zig");
 const sig = @import("../signature.zig");
 
 const EcdsaP256Sha256 = std.crypto.sign.ecdsa.EcdsaP256Sha256;
@@ -62,7 +63,7 @@ fn signWalletConnect(allocator: std.mem.Allocator, kp: KeyPair, data: []const u8
     const b64 = try encodeBase64(allocator, data);
     defer allocator.free(b64);
     var salt: [16]u8 = undefined;
-    std.crypto.random.bytes(&salt);
+    csprng.randomBytes(&salt);
     const salted = try saltMessageWalletConnect(allocator, salt, b64);
     defer allocator.free(salted);
     const signature = try kp.inner.sign(salted, null);
@@ -107,15 +108,12 @@ fn verifyRfc6979(public_key: []const u8, data: []const u8, signature: []const u8
 fn verifyWalletConnect(public_key: []const u8, data: []const u8, signature: []const u8) bool {
     if (signature.len != 80) return false;
     const pk = EcdsaP256Sha256.PublicKey.fromSec1(public_key) catch return false;
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    const b64 = encodeBase64(allocator, data) catch return false;
-    defer allocator.free(b64);
+    const b64 = encodeBase64(std.heap.page_allocator, data) catch return false;
+    defer std.heap.page_allocator.free(b64);
     var salt: [16]u8 = undefined;
     @memcpy(&salt, signature[64..80]);
-    const salted = saltMessageWalletConnect(allocator, salt, b64) catch return false;
-    defer allocator.free(salted);
+    const salted = saltMessageWalletConnect(std.heap.page_allocator, salt, b64) catch return false;
+    defer std.heap.page_allocator.free(salted);
     var raw: [64]u8 = undefined;
     @memcpy(&raw, signature[0..64]);
     const sig_obj = EcdsaP256Sha256.Signature.fromBytes(raw);
@@ -127,7 +125,7 @@ fn saltMessageWalletConnect(allocator: std.mem.Allocator, salt: [16]u8, b64: []c
     const salt_hex_buf = std.fmt.bytesToHex(salt, .lower);
     const salt_hex = try allocator.dupe(u8, &salt_hex_buf);
     defer allocator.free(salt_hex);
-    var out: std.ArrayList(u8) = .{};
+    var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
     try out.appendSlice(allocator, &[_]u8{ 0x01, 0x00, 0x01, 0xf0 });
     var tmp: [9]u8 = undefined;
@@ -183,9 +181,7 @@ test "neo varuint encoding" {
 }
 
 test "walletconnect salted message roundtrip large payload" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     var seed: [32]u8 = undefined;
     @memset(&seed, 0x33);
     const kp = try KeyPair.fromSeed(seed);
@@ -200,13 +196,11 @@ test "walletconnect salted message roundtrip large payload" {
 }
 
 test "ecdsa rfc6979 roundtrip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
     var seed: [32]u8 = undefined;
     @memset(&seed, 0x42);
     const kp = try KeyPair.fromSeed(seed);
-    const s = try kp.sign(gpa.allocator(), .ecdsa_deterministic_sha256, "message");
-    defer gpa.allocator().free(s.key);
-    defer gpa.allocator().free(s.value);
+    const s = try kp.sign(std.testing.allocator, .ecdsa_deterministic_sha256, "message");
+    defer std.testing.allocator.free(s.key);
+    defer std.testing.allocator.free(s.value);
     try std.testing.expect(verify(.ecdsa_deterministic_sha256, s.key, "message", s.value));
 }

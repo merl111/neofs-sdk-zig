@@ -150,10 +150,8 @@ pub fn concat(allocator: std.mem.Allocator, hashes: []const []const u8) ![]u8 {
 
 pub fn validate(h: []const u8, hs: []const []const u8) !bool {
     if (h.len != Size or hs.len == 0) return false;
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const combined = try concat(gpa.allocator(), hs);
-    defer gpa.allocator().free(combined);
+    const combined = try concat(std.testing.allocator, hs);
+    defer std.testing.allocator.free(combined);
     return std.mem.eql(u8, h, combined);
 }
 

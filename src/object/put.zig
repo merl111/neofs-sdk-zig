@@ -53,7 +53,7 @@ pub fn preparePutObjectCustom(
 
     const v = version.current();
 
-    var attrs: std.ArrayList(object_pb.Header.Attribute) = .{};
+    var attrs: std.ArrayList(object_pb.Header.Attribute) = .empty;
     try attrs.append(allocator, .{
         .key = try allocator.dupe(u8, "FileName"),
         .value = try allocator.dupe(u8, file_name),

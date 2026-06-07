@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 
 pub const Verb = enum {
     put,
@@ -19,7 +20,7 @@ test {
 
 pub fn new(verb: Verb, nbf_epoch: u64, exp_epoch: u64) Token {
     var id: [16]u8 = undefined;
-    std.crypto.random.bytes(&id);
+    csprng.randomBytes(&id);
     return .{
         .id = id,
         .verb = verb,

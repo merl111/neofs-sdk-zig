@@ -3,11 +3,9 @@ const base58 = @import("base58.zig");
 
 pub const wif_version: u8 = 0x80;
 
-pub fn decodePrivateKey(wif: []const u8) ![32]u8 {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const payload = try base58.decodeChecked(gpa.allocator(), wif);
-    defer gpa.allocator().free(payload);
+pub fn decodePrivateKey(allocator: std.mem.Allocator, wif: []const u8) ![32]u8 {
+    const payload = try base58.decodeChecked(allocator, wif);
+    defer allocator.free(payload);
 
     switch (payload.len) {
         33 => {},
@@ -23,6 +21,6 @@ pub fn decodePrivateKey(wif: []const u8) ![32]u8 {
 }
 
 test "decode known testnet wif" {
-    const seed = try decodePrivateKey("KxyjQ8eUa4FHt3Gvioyt1Wz29cTUrE4eTqX3yFSk1YFCsPL8uNsY");
+    const seed = try decodePrivateKey(std.testing.allocator, "KxyjQ8eUa4FHt3Gvioyt1Wz29cTUrE4eTqX3yFSk1YFCsPL8uNsY");
     try std.testing.expect(seed[0] == 0x01 or seed[0] != 0);
 }

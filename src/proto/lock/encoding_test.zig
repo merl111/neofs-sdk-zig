@@ -3,9 +3,7 @@ const marshal_stable = @import("../../testutil/marshal_stable.zig");
 const pb = @import("../gen/lock/types.pb.zig");
 
 test "lock marshal stable round-trip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const oid_val = try allocator.dupe(u8, &[_]u8{1});
     var msg: pb.Lock = .{};

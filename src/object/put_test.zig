@@ -3,9 +3,7 @@ const put = @import("put.zig");
 const user = @import("../user/id.zig");
 
 test "prepare put object golden object id" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     var pubkey: [33]u8 = undefined;
     @memset(&pubkey, 0x02);

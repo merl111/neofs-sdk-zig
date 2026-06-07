@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 const session_mod = @import("../session/token.zig");
 const session_v2 = @import("../session/v2/token.zig");
 
@@ -34,7 +35,8 @@ pub const SessionCache = struct {
         const entry = self.entries.get(key) orelse return null;
         if (entry.version != 1) return null;
         if (entry.token_v1.exp_epoch <= self.current_epoch + 1) {
-            _ = self.entries.remove(key);
+            const removed = self.entries.fetchRemove(key) orelse return null;
+            self.allocator.free(removed.key);
             return null;
         }
         return entry.token_v1;
@@ -43,9 +45,10 @@ pub const SessionCache = struct {
     pub fn getV2(self: *SessionCache, key: []const u8) ?session_v2.Token {
         const entry = self.entries.get(key) orelse return null;
         if (entry.version != 2) return null;
-        const now = @as(u64, @intCast(std.time.timestamp()));
+        const now = @as(u64, @intCast(clock.timestamp()));
         if (entry.token_v2.exp <= now) {
-            _ = self.entries.remove(key);
+            const removed = self.entries.fetchRemove(key) orelse return null;
+            self.allocator.free(removed.key);
             return null;
         }
         return entry.token_v2;
@@ -78,7 +81,7 @@ pub const SessionCache = struct {
     }
 
     pub fn deleteByPrefix(self: *SessionCache, prefix: []const u8) void {
-        var to_remove: std.ArrayList([]const u8) = .{};
+        var to_remove: std.ArrayList([]const u8) = .empty;
         defer {
             for (to_remove.items) |k| self.allocator.free(k);
             to_remove.deinit(self.allocator);

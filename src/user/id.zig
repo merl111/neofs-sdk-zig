@@ -37,8 +37,6 @@ pub const ID = struct {
             @memcpy(&compressed, pubkey[0..33]);
             return fromCompressedPublicKey(compressed);
         }
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
         const kp = keys.KeyPair.fromSecretBytes(pubkey) catch {
             var out: [IDSize]u8 = [_]u8{0} ** IDSize;
             var hash: [32]u8 = undefined;
@@ -107,7 +105,7 @@ test {
 
 test "user id from neo wif" {
     const wif = "KxyjQ8eUa4FHt3Gvioyt1Wz29cTUrE4eTqX3yFSk1YFCsPL8uNsY";
-    const secret = try @import("../crypto/wif.zig").decodePrivateKey(wif);
+    const secret = try @import("../crypto/wif.zig").decodePrivateKey(std.testing.allocator, wif);
     const kp = try keys.KeyPair.fromSecretBytes(&secret);
     try std.testing.expectEqualStrings(
         "02b3622bf4017bdfe317c58aed5f4c753f206b7db896046fa7d774bbc4bf7f8dc2",
@@ -120,10 +118,8 @@ test "user id from neo wif" {
         0xb2, 0xf1, 0x95, 0xca, 0x73,
     };
     try std.testing.expectEqualSlices(u8, &expected_bytes, &id.bytes);
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const s = try id.encodeToString(gpa.allocator());
-    defer gpa.allocator().free(s);
+    const s = try id.encodeToString(std.testing.allocator);
+    defer std.testing.allocator.free(s);
     try std.testing.expectEqualStrings("Nhfg3TbpwogLvDGVvAvqyThbsHgoSUKwtn", s);
 }
 

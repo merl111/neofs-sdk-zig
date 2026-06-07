@@ -21,7 +21,7 @@ pub fn encodeChecked(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
     var h2: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(payload, &h1, .{});
     std.crypto.hash.sha2.Sha256.hash(&h1, &h2, .{});
-    var buf: std.ArrayList(u8) = .{};
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
     try buf.appendSlice(allocator, payload);
     try buf.appendSlice(allocator, h2[0..4]);
@@ -89,9 +89,7 @@ pub fn decode(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
 }
 
 test "base58 neo user id vector" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const expected = "NQZkR7mG74rJsGAHnpkiFeU9c4f5VLN54f";
     const payload = [_]u8{
         53, 51, 5, 166, 111, 29, 20, 101, 192, 165, 28, 167, 57,
@@ -106,9 +104,7 @@ test "base58 neo user id vector" {
 }
 
 test "base58 roundtrip" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const payload = "hello";
     const enc = try encode(allocator, payload);
     defer allocator.free(enc);

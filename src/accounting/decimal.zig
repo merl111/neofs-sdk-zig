@@ -57,9 +57,7 @@ test "decimal add" {
 }
 
 test "decimal format gas" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const whole = try Decimal.init(100_000_000, 8).formatString(allocator);
     defer allocator.free(whole);

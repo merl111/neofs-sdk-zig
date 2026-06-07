@@ -1,8 +1,9 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 
 pub fn randomBytes(allocator: std.mem.Allocator, len: usize) ![]u8 {
     const out = try allocator.alloc(u8, len);
-    std.crypto.random.bytes(out);
+    csprng.randomBytes(out);
     return out;
 }
 
@@ -24,22 +25,20 @@ pub fn randomHex(allocator: std.mem.Allocator, byte_len: usize) ![]u8 {
 
 pub fn randContainerId() [32]u8 {
     var id: [32]u8 = undefined;
-    std.crypto.random.bytes(&id);
+    csprng.randomBytes(&id);
     return id;
 }
 
 pub fn randOwnerId(allocator: std.mem.Allocator) ![33]u8 {
     var key: [33]u8 = undefined;
     key[0] = 0x02;
-    std.crypto.random.bytes(key[1..]);
+    csprng.randomBytes(key[1..]);
     _ = allocator;
     return key;
 }
 
 test "random helpers produce data" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
 
     const raw = try randomBytes(allocator, 16);
     defer allocator.free(raw);

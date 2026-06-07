@@ -546,7 +546,7 @@ fn operationString(op: Operation) []const u8 {
     };
 }
 
-fn writeFilterString(writer: anytype, f: Filter) !void {
+fn writeFilterString(writer: *std.Io.Writer, f: Filter) !void {
     const op = f.op;
     const unspecified = op == .OPERATION_UNSPECIFIED;
     if (f.key.len > 0) {
@@ -579,49 +579,52 @@ pub fn encodeString(allocator: std.mem.Allocator, policy: PlacementPolicy) ![]u8
     for (policy.replicas.items) |r| {
         try write_line_prefix(&buf, allocator, &written_smth);
         if (r.selector.len > 0) {
-            try buf.writer(allocator).print("REP {d} IN {s}", .{ r.count, r.selector });
+            try buf.print(allocator, "REP {d} IN {s}", .{ r.count, r.selector });
         } else {
-            try buf.writer(allocator).print("REP {d}", .{r.count});
+            try buf.print(allocator, "REP {d}", .{r.count});
         }
     }
 
     for (policy.ec_rules.items) |rule| {
         try write_line_prefix(&buf, allocator, &written_smth);
         if (rule.selector.len > 0) {
-            try buf.writer(allocator).print("EC {d}/{d} IN {s}", .{ rule.data_part_num, rule.parity_part_num, rule.selector });
+            try buf.print(allocator, "EC {d}/{d} IN {s}", .{ rule.data_part_num, rule.parity_part_num, rule.selector });
         } else {
-            try buf.writer(allocator).print("EC {d}/{d}", .{ rule.data_part_num, rule.parity_part_num });
+            try buf.print(allocator, "EC {d}/{d}", .{ rule.data_part_num, rule.parity_part_num });
         }
     }
 
     if (policy.container_backup_factor > 0) {
         try write_line_prefix(&buf, allocator, &written_smth);
-        try buf.writer(allocator).print("CBF {d}", .{policy.container_backup_factor});
+        try buf.print(allocator, "CBF {d}", .{policy.container_backup_factor});
     }
 
     for (policy.selectors.items) |s| {
         try write_line_prefix(&buf, allocator, &written_smth);
-        try buf.writer(allocator).print("SELECT {d}", .{s.count});
+        try buf.print(allocator, "SELECT {d}", .{s.count});
         if (s.attribute.len > 0) {
             const clause: []const u8 = switch (s.clause) {
                 .SAME => "SAME ",
                 .DISTINCT => "DISTINCT ",
                 else => "",
             };
-            try buf.writer(allocator).print(" IN {s}{s}", .{ clause, s.attribute });
+            try buf.print(allocator, " IN {s}{s}", .{ clause, s.attribute });
         }
         if (s.filter.len > 0) {
-            try buf.writer(allocator).print(" FROM {s}", .{s.filter});
+            try buf.print(allocator, " FROM {s}", .{s.filter});
         }
         if (s.name.len > 0) {
-            try buf.writer(allocator).print(" AS {s}", .{s.name});
+            try buf.print(allocator, " AS {s}", .{s.name});
         }
     }
 
     for (policy.filters.items) |f| {
         try write_line_prefix(&buf, allocator, &written_smth);
-        try buf.writer(allocator).writeAll("FILTER ");
-        try writeFilterString(buf.writer(allocator), f);
+        try buf.appendSlice(allocator, "FILTER ");
+        var filter_writer: std.Io.Writer.Allocating = .init(allocator);
+        defer filter_writer.deinit();
+        try writeFilterString(&filter_writer.writer, f);
+        try buf.appendSlice(allocator, filter_writer.written());
     }
 
     return try buf.toOwnedSlice(allocator);

@@ -3,10 +3,8 @@ const sdk = @import("neofs_sdk");
 
 const default_endpoint = "grpcs://st1.t5.fs.neo.org:8082";
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     const endpoint = std.process.getEnvVarOwned(allocator, "NEOFS_ENDPOINT") catch try allocator.dupe(u8, default_endpoint);
     defer allocator.free(endpoint);
@@ -35,7 +33,7 @@ pub fn main() !void {
     client.setSignerKey(&secret);
 
     const tls = std.mem.startsWith(u8, endpoint, "grpcs://");
-    try client.dial(endpoint, tls, 30_000);
+    try client.dial(init.io, endpoint, tls, 30_000);
     std.debug.print("Connected to {s} as owner {s}\n", .{ endpoint, owner_str });
 
     const epoch = try client.networkInfo();

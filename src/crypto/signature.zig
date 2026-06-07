@@ -47,35 +47,29 @@ pub fn verify(_: []const u8, data: []const u8, signature: Signature) bool {
 }
 
 test "sign and verify rfc6979" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const s = try sign(gpa.allocator(), .ecdsa_deterministic_sha256, "secret-key-material", "msg");
-    defer gpa.allocator().free(s.key);
-    defer gpa.allocator().free(s.value);
+    const s = try sign(std.testing.allocator, .ecdsa_deterministic_sha256, "secret-key-material", "msg");
+    defer std.testing.allocator.free(s.key);
+    defer std.testing.allocator.free(s.value);
     try std.testing.expect(verify(s.key, "msg", s));
 }
 
 test "n3 uses verifier callback" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
     const Verifier = struct {
         fn verify(_: []const u8, invoc: []const u8, verif: []const u8) bool {
             return std.mem.eql(u8, invoc, "invoc") and std.mem.eql(u8, verif, "verif");
         }
     };
     setN3Verifier(Verifier.verify);
-    const s = try newN3Signature(gpa.allocator(), "invoc", "verif");
-    defer gpa.allocator().free(s.key);
-    defer gpa.allocator().free(s.value);
+    const s = try newN3Signature(std.testing.allocator, "invoc", "verif");
+    defer std.testing.allocator.free(s.key);
+    defer std.testing.allocator.free(s.value);
     try std.testing.expect(verify("verif", "data", s));
 }
 
 test "walletconnect signature carries salt suffix" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const s = try sign(gpa.allocator(), .ecdsa_walletconnect, "secret", "msg");
-    defer gpa.allocator().free(s.key);
-    defer gpa.allocator().free(s.value);
+    const s = try sign(std.testing.allocator, .ecdsa_walletconnect, "secret", "msg");
+    defer std.testing.allocator.free(s.key);
+    defer std.testing.allocator.free(s.value);
     try std.testing.expectEqual(@as(usize, 80), s.value.len);
     try std.testing.expect(verify(s.key, "msg", s));
 }

@@ -75,7 +75,7 @@ pub fn newContext(
 ) !session_pb.SessionContextV2 {
     var ctx: session_pb.SessionContextV2 = .{
         .container = null,
-        .verbs = .{},
+        .verbs = .empty,
     };
     errdefer ctx.deinit(allocator);
     if (!isWildcardContainerId(container_id)) {
@@ -95,13 +95,13 @@ pub fn buildBody(
     var body: session_pb.SessionTokenV2.Body = .{
         .version = 0,
         .issuer = .{ .value = try allocator.dupe(u8, &issuer.bytes) },
-        .subjects = .{},
+        .subjects = .empty,
         .lifetime = .{
             .iat = lifetime.iat,
             .nbf = lifetime.nbf,
             .exp = lifetime.exp,
         },
-        .contexts = .{},
+        .contexts = .empty,
     };
     errdefer body.deinit(allocator);
     try body.subjects.appendSlice(allocator, subjects);
@@ -139,18 +139,16 @@ pub fn signBody(
 }
 
 test "normalizeSessionTokenV2 strips legacy zero container contexts" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const verbs = [_]session_pb.Verb{.CONTAINER_PUT};
 
     var ctx: session_pb.SessionContextV2 = .{
         .container = .{ .value = try allocator.dupe(u8, &std.mem.zeroes([32]u8)) },
-        .verbs = .{},
+        .verbs = .empty,
     };
     try ctx.verbs.appendSlice(allocator, &verbs);
     var body: session_pb.SessionTokenV2.Body = .{
-        .contexts = .{},
+        .contexts = .empty,
     };
     try body.contexts.append(allocator, ctx);
     var tok: session_pb.SessionTokenV2 = .{ .body = body };
@@ -161,9 +159,7 @@ test "normalizeSessionTokenV2 strips legacy zero container contexts" {
 }
 
 test "wildcard context omits container field" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = std.testing.allocator;
     const verbs = [_]session_pb.Verb{.CONTAINER_PUT};
 
     var wildcard = try newContext(allocator, std.mem.zeroes([32]u8), &verbs);

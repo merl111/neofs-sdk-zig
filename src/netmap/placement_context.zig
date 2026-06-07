@@ -205,7 +205,7 @@ pub const PlacementContext = struct {
                     const v = n.attribute(attr_key);
                     const gop = try node_map.getOrPut(self.allocator, v);
                     if (!gop.found_existing) {
-                        gop.value_ptr.* = .{};
+                        gop.value_ptr.* = .empty;
                     }
                     try gop.value_ptr.append(self.allocator, n);
                 }

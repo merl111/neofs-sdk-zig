@@ -1,4 +1,5 @@
 const std = @import("std");
+const csprng = @import("../crypto/csprng.zig");
 
 /// Weighted random selection using Vose's alias method.
 pub const Sampler = struct {
@@ -17,9 +18,9 @@ pub const Sampler = struct {
         defer allocator.free(scaled);
         for (weights, 0..) |w, i| scaled[i] = w * @as(f64, @floatFromInt(n));
 
-        var small: std.ArrayList(usize) = .{};
+        var small: std.ArrayList(usize) = .empty;
         defer small.deinit(allocator);
-        var large: std.ArrayList(usize) = .{};
+        var large: std.ArrayList(usize) = .empty;
         defer large.deinit(allocator);
         for (scaled, 0..) |p, i| {
             if (p < 1.0) try small.append(allocator, i) else try large.append(allocator, i);
@@ -43,7 +44,7 @@ pub const Sampler = struct {
         }
 
         var seed: u64 = undefined;
-        std.crypto.random.bytes(std.mem.asBytes(&seed));
+        csprng.randomBytes(std.mem.asBytes(&seed));
         return .{
             .probabilities = probabilities,
             .alias = alias,
@@ -65,10 +66,8 @@ pub const Sampler = struct {
 };
 
 test "sampler distribution" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var sampler = try Sampler.init(gpa.allocator(), &.{ 1.0, 1.0, 1.0 });
-    defer sampler.deinit(gpa.allocator());
+    var sampler = try Sampler.init(std.testing.allocator, &.{ 1.0, 1.0, 1.0 });
+    defer sampler.deinit(std.testing.allocator);
     var counts = [_]usize{ 0, 0, 0 };
     var i: usize = 0;
     while (i < 300) : (i += 1) counts[sampler.next()] += 1;

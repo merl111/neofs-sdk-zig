@@ -3,15 +3,12 @@ const sdk = @import("neofs_sdk");
 
 /// Full container/object lifecycle against a live NeoFS node.
 /// Guarded by `NEOFS_AIO=1` so it only runs from integration scripts.
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     if (!aioEnabled()) {
         std.debug.print("Set NEOFS_AIO=1 to run the integration lifecycle test.\n", .{});
         return;
     }
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = init.gpa;
 
     const endpoint = std.process.getEnvVarOwned(allocator, "NEOFS_ENDPOINT") catch
         try allocator.dupe(u8, "grpc://localhost:8080");
@@ -32,7 +29,7 @@ pub fn main() !void {
     client.setSignerKey(&secret);
 
     const tls = std.mem.startsWith(u8, endpoint, "grpcs://");
-    try client.dial(endpoint, tls, 30_000);
+    try client.dial(init.io, endpoint, tls, 30_000);
     std.debug.print("AIO lifecycle: connected to {s} as {s}\n", .{ endpoint, owner_str });
 
     const epoch = try client.networkInfo();
@@ -73,7 +70,7 @@ pub fn main() !void {
     var get_result = try client.objectGetInit(cid, oid);
     defer get_result.header.deinit(allocator);
     defer get_result.reader.deinit();
-    var payload_buf: std.ArrayList(u8) = .{};
+    var payload_buf: std.ArrayList(u8) = .empty;
     defer payload_buf.deinit(allocator);
     var read_buf: [4096]u8 = undefined;
     while (true) {

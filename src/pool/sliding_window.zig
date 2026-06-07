@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../util/clock.zig");
 
 /// Sliding-window error counter for node health monitoring.
 pub const SlidingWindow = struct {
@@ -7,18 +8,18 @@ pub const SlidingWindow = struct {
     prev_count: i64 = 0,
     curr_count: i64 = 0,
     window_start_ns: i64,
-    mutex: std.Thread.Mutex = .{},
+    locked: std.atomic.Value(bool) = .init(false),
 
     pub fn init(window_ns: i64, limit: i64) SlidingWindow {
         return .{
             .window_ns = window_ns,
             .limit = limit,
-            .window_start_ns = @intCast(std.time.nanoTimestamp()),
+            .window_start_ns = @intCast(clock.nanoTimestamp()),
         };
     }
 
     pub fn allow(self: *SlidingWindow) bool {
-        const now: i64 = @intCast(std.time.nanoTimestamp());
+        const now: i64 = @intCast(clock.nanoTimestamp());
         self.advance(now);
         self.curr_count += 1;
         const elapsed = now - self.window_start_ns;
@@ -33,8 +34,10 @@ pub const SlidingWindow = struct {
 
     fn advance(self: *SlidingWindow, now: i64) void {
         if (now - self.window_start_ns < self.window_ns) return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        while (self.locked.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
+            std.Thread.yield() catch {};
+        }
+        defer self.locked.store(false, .release);
         const start = self.window_start_ns;
         const elapsed = now - start;
         if (elapsed < self.window_ns) return;
